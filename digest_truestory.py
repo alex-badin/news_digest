@@ -9,6 +9,7 @@ import csv
 import asyncio
 
 import utils
+import sys
 
 # CRDENTIALS
 current_dir = os.path.dirname(os.path.abspath(__file__))
@@ -47,6 +48,7 @@ async def get_last_message(api_id, api_hash, truestory_ids):
         reader = csv.reader(csvfile)
         for row in reader:
             if str(message_id) in row:
+                print(f"Message {message_id} was already processed.")
                 return None, None, None, None, None
     # parse the message into header and headlines
     text_list = text.split('\n\n')
@@ -66,6 +68,11 @@ async def get_last_message(api_id, api_hash, truestory_ids):
 
 header_text, text_list, days_offset, date, message_id = asyncio.run(get_last_message(api_id, api_hash, truestory_ids))
 
+if header_text is None:
+    print("No new messages. Exiting.")
+    sys.exit()
+
+# rest of the script
 
 ## RAG, COMPARE & SEND to TG channel
 # dates for filtering
