@@ -1,0 +1,14 @@
+.DS_Store
+session.session
+__pycache__
+
+# Ignore all log, api & result files 
+*.log 
+*.txt
+*.csv
+
+# Ignore output & old folders
+output/
+old/
+keys/
+nltk_data/
