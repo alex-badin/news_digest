@@ -43,11 +43,11 @@ async def get_last_message(api_id, api_hash, truestory_ids):
     date = date.strftime("%Y-%m-%d")
     message_id = message.id
     # check if it was already processed. If yes, return None
-    # with open(truestory_ids, 'r') as csvfile:
-    #     reader = csv.reader(csvfile)
-    #     for row in reader:
-    #         if str(message_id) in row:
-    #             return None, None, None, None, None
+    with open(truestory_ids, 'r') as csvfile:
+        reader = csv.reader(csvfile)
+        for row in reader:
+            if str(message_id) in row:
+                return None, None, None, None, None
     # parse the message into header and headlines
     text_list = text.split('\n\n')
     header_text = text_list[0]
