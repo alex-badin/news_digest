@@ -1,7 +1,5 @@
 from telethon import TelegramClient
 import json
-import re
-import pandas as pd
 import time
 from datetime import datetime, timedelta
 import os
@@ -17,12 +15,14 @@ keys_path = current_dir+'/keys/'
 with open(keys_path+'api_keys.json') as f:
   credentials = json.loads(f.read())
 # load TG credentials
-api_id = credentials['api_id'] 
+api_id = credentials['api_id']
 api_hash = credentials['api_hash']
 phone = credentials['phone']
 
+channel_id = credentials['channel_id']
+
 # TELEGRAM CLIENT SESSION
-session_path = 'session/'
+session_path = current_dir+'/session/'
 if not os.path.exists(session_path):
     os.makedirs(session_path)
 
@@ -100,10 +100,10 @@ head_len = len(header_text)
 header = f"{'='*head_len}\n{header_text}\n{'='*head_len}"
 async def send_header():
     async with TelegramClient(session_path+'session_digest', api_id, api_hash) as client:
-        await client.send_message(-1002138728748, header)
+        await client.send_message(channel_id, header)
+asyncio.run(send_header())
 
 async def main():
-    await send_header()
     for i, topic in enumerate(cleaned_texts):
         print(f"Starting opeani summary of topic #{i}: {cleaned_texts[i][:40]}")
         # get summaries for all stances
@@ -128,7 +128,6 @@ async def main():
             await client.send_message(-1002138728748, result)
             print(f"Sent to TG channel topic {i}")
         time.sleep(1)
-
 asyncio.run(main())
 
 # add message id to csv file to not process it again
