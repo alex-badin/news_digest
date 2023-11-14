@@ -83,7 +83,7 @@ dates.append((datetime.today() + timedelta(days=1)).strftime('%Y-%m-%d'))
 # Apply the function to your list
 cleaned_texts = [utils.clean_text(text) for text in text_list]
 header_text = utils.clean_text(header_text)
-if days_offset == 7: header_text = header_text + f" ({dates[0]} - {dates[1]})" # add dates to header if weekly digest
+if days_offset == 7: header_text = header_text + f" ({date})" # add dates to header if weekly digest
 head_len = len(header_text)
 header = f"{'='*head_len}\n{header_text}\n{'='*head_len}"
 
@@ -98,12 +98,11 @@ price_1K = utils.get_price_per_1K(model_name)
 header_text = header_text + f" ({dates[0]} - {dates[1]})"
 head_len = len(header_text)
 header = f"{'='*head_len}\n{header_text}\n{'='*head_len}"
-async def send_header():
-    async with TelegramClient(session_path+'session_digest', api_id, api_hash) as client:
-        await client.send_message(channel_id, header)
-asyncio.run(send_header())
 
-async def main():
+async def send_header(client):
+    await client.send_message(channel_id, header)
+
+async def main(client):
     for i, topic in enumerate(cleaned_texts):
         print(f"Starting opeani summary of topic #{i}: {cleaned_texts[i][:40]}")
         # get summaries for all stances
@@ -124,11 +123,16 @@ async def main():
         result = f"Тема: {topic}: \n\n{compare_reply}"
 
         # send compare_reply to TG channel
-        async with TelegramClient(session_path+'session_digest', api_id, api_hash) as client:
-            await client.send_message(-1002138728748, result)
-            print(f"Sent to TG channel topic {i}")
+        await client.send_message(channel_id, result)
+        print(f"Sent to TG channel topic {i}")
         time.sleep(1)
-asyncio.run(main())
+
+async def run():
+    async with TelegramClient(session_path+'session_digest', api_id, api_hash) as client:
+        await send_header(client)
+        await main(client)
+
+asyncio.run(run())
 
 # add message id to csv file to not process it again
 with open(truestory_ids, 'a', newline='') as csvfile:
