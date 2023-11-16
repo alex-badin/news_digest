@@ -1,5 +1,4 @@
 .DS_Store
-session.session
 __pycache__
 
 # Ignore all log, api & result files 

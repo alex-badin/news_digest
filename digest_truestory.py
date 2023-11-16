@@ -98,7 +98,7 @@ model_name = "gpt-3.5-turbo"
 price_1K = utils.get_price_per_1K(model_name)
 
 # send header to TG channel
-header_text = header_text + f" ({dates[0]} - {dates[1]})"
+header_text = header_text + f"({date})"
 head_len = len(header_text)
 header = f"{'='*head_len}\n{header_text}\n{'='*head_len}"
 
