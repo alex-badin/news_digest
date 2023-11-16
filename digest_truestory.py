@@ -1,3 +1,6 @@
+# Purpose: get last message from TrueStory channel, summarize it and send to TG channel
+# Assumption: script runs every hour and should not miss any message
+
 from telethon import TelegramClient
 import json
 import time
