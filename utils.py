@@ -30,6 +30,7 @@ from tenacity import (
 import openai
 import pinecone
 import cohere
+from icecream import ic
 
 # CRDENTIALS
 # Get the directory of the current script
@@ -63,36 +64,46 @@ openai.api_key = openai_key
 cohere_key = credentials['cohere_key']
 co = cohere.Client(cohere_key)
 
-#===============================================================================
-def clean_text(text):
-    # Unicode range for emojis
+# PARAMETERS
+top_n = 30 # number of news to retrieve from pinecone
+
+#==============CLEAN FUNCTIONS==============================================
+# clean topics from TrueStory
+def clean_text_topic(text):
+    # Remove URLs enclosed in brackets
+    url_pattern = re.compile(r'\(https?://\S+|www\.\S+\)')
+    text = url_pattern.sub('', text)
+
+    # Remove Emojis
     emoji_pattern = re.compile("["
-                               "\U0001F600-\U0001F64F"  # Emoticons
-                               "\U0001F300-\U0001F5FF"  # Symbols & Pictographs
-                               "\U0001F680-\U0001F6FF"  # Transport & Map Symbols
-                               "\U0001F1E0-\U0001F1FF"  # Flags (iOS)
-                               "]+", flags=re.UNICODE)
+                           u"\U0001F600-\U0001F64F"  # emoticons
+                           u"\U0001F300-\U0001F5FF"  # symbols & pictographs
+                           u"\U0001F680-\U0001F6FF"  # transport & map symbols
+                           u"\U0001F1E0-\U0001F1FF"  # flags (iOS)
+                           u"\U00002702-\U000027B0"
+                           u"\U000024C2-\U0001F251"
+                           "]+", flags=re.UNICODE)
+    text = emoji_pattern.sub(r'', text)
 
-    # Remove emojis
-    text = emoji_pattern.sub(r'', str(text))
-    # Regular expression for URLs
-    url_pattern = re.compile(r"http\S+|www\S+")
-    # Remove URLs
-    text = url_pattern.sub(r'', str(text))
-    # remove /n
-    text = text.replace('\n', '. ')
-    # Remove any remaining variation selectors
-    text = ''.join(char for char in text if unicodedata.category(char) != 'Mn')
+    # Remove numbers in brackets at the end
+    numbers_pattern = re.compile(r'\(\d+\)\s*$')
+    text = numbers_pattern.sub('', text)
 
-    #Remove Foreign Agent text
-    pattern = re.compile(r'[А-ЯЁ18+]{3,}\s[А-ЯЁ()]{5,}[^\n]*ИНОСТРАННОГО АГЕНТА')
-    text = pattern.sub('', text)
-    name1 = 'ПИВОВАРОВА АЛЕКСЕЯ ВЛАДИМИРОВИЧА'
-    text = text.replace(name1, '')
+    # Remove non-breaking spaces
+    text = text.replace('\xa0', ' ')
 
-    return text
+    #Remove **
+    text = text.replace('**', '')
 
-def clean_text_new(text):
+    # Remove double spaces
+    text = re.sub(' +', ' ', text)
+    # Remove square brackets
+    text = text.replace('[', '').replace(']', '')
+
+    return text.strip()  # strip() is used to remove leading/trailing white spaces
+
+# standard clean text function
+def clean_text(text):
     # Unicode range for emojis
     emoji_pattern = re.compile("["
                                "\U0001F600-\U0001F64F"  # Emoticons
@@ -182,8 +193,10 @@ def get_top_pine(request: str=None, request_emb=None, dates: ['%Y-%m-%d',['%Y-%m
         }
 
     # query pinecone
+    ic(filter)
+    ic(index.query(request_emb, top_k=top_n, include_metadata=True, filter=filter))
     res = index.query(request_emb, top_k=top_n, include_metadata=True, filter=filter)
-    #save results to txt-file
+    # save results to txt-file
     with open('pinecone_results.txt', 'w') as f:
         f.write(str(res.to_dict()))
     # check if results are empty
@@ -222,7 +235,7 @@ def get_price_per_1K(model_name):
     return price_1K
 
 def cohere_rerank(request: str, sim_news: list, dates, stance, threshold = 0.8):
-    # Cohere ReRank
+    # Cohere ReRank (Trial key is limited to 10 API calls / minute)
     reranked_docs = co.rerank(model="rerank-multilingual-v2.0", query=request, documents=sim_news)
 
     # create a dataframe with news and cohere results
@@ -234,8 +247,8 @@ def cohere_rerank(request: str, sim_news: list, dates, stance, threshold = 0.8):
     
     # SAVE reranked news to csv (add request, dates, sources, stance)
     df_reranked['request'] = request
-    df_reranked['dates'] = dates
-    df_reranked['stance'] = stance
+    df_reranked['dates'] = str(dates)
+    df_reranked['stance'] = str(stance)
     # create csv if it doesn't exist
     if not os.path.isfile('cohere_reranked.csv'):
         df_reranked.to_csv('cohere_reranked.csv', index=False)
@@ -266,6 +279,9 @@ def ask_openai(request: str, news4request: list, model_name = "gpt-3.5-turbo", t
     elif prompt_language == "ru": system_content = system_content_ru
     else: system_content = system_content_ru
 
+    if type(news4request) == list:
+        news4request = '\n'.join(news4request)
+
     response = openai.ChatCompletion.create(
         model = model_name,
         messages=[
@@ -287,14 +303,14 @@ def ask_openai(request: str, news4request: list, model_name = "gpt-3.5-turbo", t
     return response
 
 # FUNCTION ask_media to combine all together (TO USE IN TG BOT REQUESTS): get top news, filter via cohere, ask openai for summary
-def ask_media(request, dates=None, sources=None, stance=None, model_name = "gpt-3.5-turbo", tokens_out = 512, full_reply = True, top_n = 10):
+def ask_media(request, dates=None, sources=None, stance=None, model_name = "gpt-3.5-turbo", tokens_out = 512, full_reply = True, top_n = top_n):
     # check request time
     request_time = time.strftime("%Y-%m-%d %H:%M:%S", time.localtime())
 
     # get top news
     # INPUT: request, dates, sources, stance
     # OUTPUT: news4request - list of news texts for openai, news_links - list of links
-    news4request, news_links = get_top_pine(request, dates=dates, sources=sources, stance=stance, model="text-embedding-ada-002", top_n=top_n)
+    news4request, news_links = get_top_pine(request, dates=dates, sources=sources, stance=stance, model="text-embedding-ada-002", top_n=top_n, join_news=False)
     # filter news via Cohere ReRank (dates & stance for saving full results to csv)
     news4request = cohere_rerank(request, news4request, dates=dates, stance=stance, threshold = 0.8)
 
@@ -309,13 +325,20 @@ def ask_media(request, dates=None, sources=None, stance=None, model_name = "gpt-
         news4request = news4request[:8000]
     elif model_name == "gpt-4-32k":
         news4request = news4request[:32000]
-    
-    reply = ask_openai(request, news4request, model_name = model_name, tokens_out = tokens_out)
+
+    # get params for long reply
     request_params = f"Request: {request}; \nFilters: dates: {dates}; sources: {sources}; stance: {stance}"
-    reply_text = reply.choices[0]['message']['content']
-    n_tokens_used = reply.usage.total_tokens
-    price_1K = get_price_per_1K(model_name)
-    reply_cost = n_tokens_used / 1000 * price_1K
+
+    if len(news4request) == 0:
+        reply_text = 'Нет новостей по теме'   
+        n_tokens_used = 0
+        reply_cost = 0
+    else:
+        reply = ask_openai(request, news4request, model_name = model_name, tokens_out = tokens_out)
+        reply_text = reply.choices[0]['message']['content']
+        n_tokens_used = reply.usage.total_tokens
+        price_1K = get_price_per_1K(model_name)
+        reply_cost = n_tokens_used / 1000 * price_1K
 
     # write params & reply to file. If file doesn't exist - create it with headers
     # check reply time
@@ -333,7 +356,7 @@ def ask_media(request, dates=None, sources=None, stance=None, model_name = "gpt-
     if full_reply == False:
         return reply_text
     else:
-        return request_params + "\n" + "Cost per request: " + str(round(reply_cost,3)) + ". Tokens used: " + str(n_tokens_used) + "\n\n" + reply_text + "\n\n" + news_links
+        return request_params + "\n" + "Cost per request: " + str(round(reply_cost,3)) + ". Tokens used: " + str(n_tokens_used) + "\n\n" + reply_text + "\n\n" + str(news_links)
 
 # COMPARE STANCES
 def compare_stances(request, summaries_list, model_name = "gpt-3.5-turbo", tokens_out = 1500, dates = None, stance = None, sources = None, full_reply = True):

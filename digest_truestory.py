@@ -8,6 +8,7 @@ from datetime import datetime, timedelta
 import os
 import csv
 import asyncio
+from icecream import ic
 
 import utils
 import sys
@@ -22,7 +23,8 @@ api_id = credentials['api_id']
 api_hash = credentials['api_hash']
 phone = credentials['phone']
 
-channel_id = credentials['channel_id']
+# channel_id_test - bubble_burst
+channel_id = credentials['channel_id_test']
 
 # TELEGRAM CLIENT SESSION
 session_path = current_dir+'/session/'
@@ -84,11 +86,13 @@ dates.append((datetime.today() - timedelta(days=days_offset)).strftime('%Y-%m-%d
 dates.append((datetime.today() + timedelta(days=1)).strftime('%Y-%m-%d'))
 
 # Apply the function to your list
-cleaned_texts = [utils.clean_text(text) for text in text_list]
-header_text = utils.clean_text(header_text)
+cleaned_texts = [utils.clean_text_topic(text) for text in text_list]
+header_text = utils.clean_text_topic(header_text)
 if days_offset == 7: header_text = header_text + f" ({date})" # add dates to header if weekly digest
 head_len = len(header_text)
 header = f"{'='*head_len}\n{header_text}\n{'='*head_len}"
+
+ic(header_text, cleaned_texts)
 
 # params for summary of each stance
 n_tokens_out = 512
@@ -115,11 +119,12 @@ async def main(client):
             summary_list.append(str([stance])+ "\n" + reply_text)
             # status update
             print(f"Summary for stance {stance} added.")
+            time.sleep(1)
 
         summary_list = '\n\n'.join(summary_list)
         # compare summaries (text w/o params)
         compare_reply = utils.compare_stances(topic, summary_list, model_name = model_name, dates=dates, full_reply = False)
-        print("Finished opeani summary of stances")
+        print("Finished opeani comparison of stances")
         print(compare_reply)
 
         # combine reply
@@ -128,7 +133,8 @@ async def main(client):
         # send compare_reply to TG channel
         await client.send_message(channel_id, result)
         print(f"Sent to TG channel topic {i}")
-        time.sleep(1)
+        # Cohere trial key is limited to 10 API calls / minute => sleep for 30 sec per 5 calls (stances).
+        time.sleep(30)
 
 async def run():
     async with TelegramClient(session_path+'session_digest', api_id, api_hash) as client:
