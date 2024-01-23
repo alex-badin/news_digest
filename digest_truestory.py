@@ -29,7 +29,7 @@ channel_id = credentials['channel_id']
 # TELEGRAM CLIENT SESSION
 session_path = current_dir+'/session/'
 if not os.path.exists(session_path):
-    os.makedirs(session_path)
+    os.makedirs(session_path)pip list
 
 # csv file tracking messages id
 truestory_ids = 'truestory_ids.csv'
@@ -129,6 +129,7 @@ async def main(client):
         for stance, num_news in num_dict.items():
             if num_news == 0:
                 post.append(f"<b><u>{stance}</u></b>: нет новостей по теме")
+                continue
             links = ", ".join([f"<a href='{link}'>{str(i+1)}</a>" for i, link in enumerate(links_dict[stance][:5])])
             post.append(f"<b><u>{stance}</u></b> ({num_news}, ссылки: {links}): {bulk_compare_dict[stance]}")
 
