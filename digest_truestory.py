@@ -29,7 +29,7 @@ channel_id = credentials['channel_id']
 # TELEGRAM CLIENT SESSION
 session_path = current_dir+'/session/'
 if not os.path.exists(session_path):
-    os.makedirs(session_path)pip list
+    os.makedirs(session_path)
 
 # csv file tracking messages id
 truestory_ids = 'truestory_ids.csv'
