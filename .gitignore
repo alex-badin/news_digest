@@ -7,9 +7,13 @@ __pycache__
 *.csv
 *.xls
 *.xlsx
+*.ipynb
+*.session
 
-# Ignore output & old folders
+# Ignore output, credentials & old folders
 output/
 old/
 keys/
 nltk_data/
+session/
+manual analysis/

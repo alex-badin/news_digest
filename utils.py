@@ -11,7 +11,7 @@
 #  - compare_stances(request - question text, summaries_list - retrieved from ask_media, model_name = "gpt-3.5-turbo", tokens_out = 1500)
 #      - returns one text object: request_params + "\n\n" + reply_text (if full_reply = False: only reply_text)
 
-# LIBRARIES
+### LIBRARIES
 import json
 import re
 import pandas as pd
@@ -32,7 +32,7 @@ import pinecone
 import cohere
 from icecream import ic
 
-# CRDENTIALS
+### CREDENTIALS
 # Get the directory of the current script
 current_dir = os.path.dirname(os.path.abspath(__file__))
 credentials_path = os.path.join(current_dir, 'keys/api_keys.json')
@@ -64,8 +64,9 @@ openai.api_key = openai_key
 cohere_key = credentials['cohere_key']
 co = cohere.Client(cohere_key)
 
-# PARAMETERS
+### PARAMETERS
 top_n = 30 # number of news to retrieve from pinecone
+list_of_stances = ['tv', 'voenkor', 'inet propaganda', 'moder', 'altern'] # possibale stances (as in pinecone DB)
 
 #==============CLEAN FUNCTIONS==============================================
 # clean topics from TrueStory
@@ -143,6 +144,7 @@ def get_embedding(text, model="text-embedding-ada-002"):
    return openai.Embedding.create(input = [text], model=model)['data'][0]['embedding']
 
 # get similar news from PINECONE with filters (dates=None, sources=None, stance=None)
+@retry(stop=stop_after_attempt(6), wait=wait_random_exponential(multiplier=1, max=10))
 def get_top_pine(request: str=None, request_emb=None, dates: ['%Y-%m-%d',['%Y-%m-%d']]=None, sources=None, stance=None\
                  , model="text-embedding-ada-002", top_n=10, join_news=True):
     """
@@ -169,6 +171,9 @@ def get_top_pine(request: str=None, request_emb=None, dates: ['%Y-%m-%d',['%Y-%m
 
     dates=dates
     stance=stance[0]
+    # check is stance is valid
+    if stance not in list_of_stances: return print(f"{stance} is not valid stance. Possible names are: {list_of_stances}")
+
     # define start and end dates (if end date is not defined, it will be set to today)
     if dates:
         if len(dates) == 2:
@@ -193,8 +198,8 @@ def get_top_pine(request: str=None, request_emb=None, dates: ['%Y-%m-%d',['%Y-%m
         }
 
     # query pinecone
-    ic(filter)
-    ic(index.query(request_emb, top_k=top_n, include_metadata=True, filter=filter))
+    # ic(request_emb, top_n, filter) # check inputs with icecream
+    # ic(index.query(request_emb, top_k=top_n, include_metadata=True, filter=filter)) # check pinecone with icecream
     res = index.query(request_emb, top_k=top_n, include_metadata=True, filter=filter)
     # save results to txt-file
     with open('pinecone_results.txt', 'w') as f:
@@ -209,7 +214,10 @@ def get_top_pine(request: str=None, request_emb=None, dates: ['%Y-%m-%d',['%Y-%m
     top_sim_news['msg_id'] = top_sim_news['id'].apply(lambda x: x.split('_')[-1])
     top_sim_news['channel_name'] = top_sim_news['id'].apply(lambda x: '_'.join(x.split('_')[:-1]))
 
-    top_sim_news['link'] = top_sim_news.apply(lambda x: "https://t.me/"+str(x.channel_name)+"/"+str(x.msg_id)+" - "+str(round(x.score,3)), axis=1)
+    # links with similarity scores
+    # top_sim_news['link'] = top_sim_news.apply(lambda x: "https://t.me/"+str(x.channel_name)+"/"+str(x.msg_id)+" - "+str(round(x.score,3)), axis=1)
+    # links without similarity scores
+    top_sim_news['link'] = top_sim_news.apply(lambda x: "https://t.me/"+str(x.channel_name)+"/"+str(x.msg_id), axis=1)
     
     # collect news & links
     if join_news:
@@ -225,21 +233,23 @@ def get_price_per_1K(model_name):
     if model_name == "gpt-3.5-turbo": #4K (~10 news)
         price_1K = 0.0015 # price per 1000 characters
     if model_name == "gpt-3.5-turbo-1106": #16K (~40 news)
-        price_1K = 0.001 # price per 1000 characters
+        price_1K = 0.0015 # price per 1000 characters
     elif model_name == "gpt-3.5-turbo-16k": #16K (~40 news)
         price_1K = 0.003
     elif model_name == "gpt-4": #8K (~20 news)
         price_1K = 0.03
     elif model_name == "gpt-4-32k": #32K (~80 news)
         price_1K = 0.06
+    elif model_name == "gpt-4-1106-preview": #32K (~80 news)
+        price_1K = 0.02
     return price_1K
 
-def cohere_rerank(request: str, sim_news: list, dates, stance, threshold = 0.8):
+def cohere_rerank(request: str, sim_news: list, news_links: list, dates, stance, threshold = 0.8):
     # Cohere ReRank (Trial key is limited to 10 API calls / minute)
     reranked_docs = co.rerank(model="rerank-multilingual-v2.0", query=request, documents=sim_news)
 
-    # create a dataframe with news and cohere results
-    df_reranked = pd.DataFrame({'news': sim_news})
+    # create a dataframe with news and cohere results)
+    df_reranked = pd.DataFrame({'news': sim_news, 'links': news_links})
     for i in range(len(reranked_docs.results)):
         index = reranked_docs.results[i].index
         df_reranked.loc[index, 'cohere_score'] = reranked_docs.results[i].relevance_score
@@ -255,10 +265,12 @@ def cohere_rerank(request: str, sim_news: list, dates, stance, threshold = 0.8):
     # append to csv
     else:
         df_reranked.to_csv('cohere_reranked.csv', mode='a', header=False, index=False)
-    
+        
     # get only relevant news and convert to list
     news4request = df_reranked[df_reranked['is_relevant']==1]['news'].tolist()
-    return news4request
+    news_links = df_reranked[df_reranked['is_relevant']==1]['links'].tolist()
+    num_news = len(news4request)
+    return news4request, news_links, num_news
 
 ## Ask OpenAI - returns openai summary based on question and sample of news
 @retry(stop=stop_after_attempt(6), wait=wait_random_exponential(multiplier=1, max=10))
@@ -275,8 +287,15 @@ def ask_openai(request: str, news4request: list, model_name = "gpt-3.5-turbo", t
         Если ответа в новостях нет, так и ответь. \
         Далее, отбери новости, которые отвечают на вопрос ({request}) и сделай по ним резюме. \
         \nНе более 1000 символов."
+    
+    # prompt for news filtered by cohere
+    system_content_ru_fl = f"Тебе будут представлены несколько новостей по теме {request}. \
+        Сгенерируй краткое описание, которое передаёт суть всех этих текстов, в виде нумерованных пунктов. \
+        Описание должно быть короче 500 символов."
+
     if prompt_language == "en": system_content = system_content_en
     elif prompt_language == "ru": system_content = system_content_ru
+    elif prompt_language == "ru_fl": system_content = system_content_ru_fl
     else: system_content = system_content_ru
 
     if type(news4request) == list:
@@ -303,7 +322,8 @@ def ask_openai(request: str, news4request: list, model_name = "gpt-3.5-turbo", t
     return response
 
 # FUNCTION ask_media to combine all together (TO USE IN TG BOT REQUESTS): get top news, filter via cohere, ask openai for summary
-def ask_media(request, dates=None, sources=None, stance=None, model_name = "gpt-3.5-turbo", tokens_out = 512, full_reply = True, top_n = top_n):
+def ask_media(request: str, dates: ['%Y-%m-%d',['%Y-%m-%d']] = None, sources = None, stance: [] = None, model_name: str = "gpt-3.5-turbo", \
+              tokens_out: int = 512, full_reply: bool = True, top_n: int = top_n, prompt_language = "ru_fl"):
     # check request time
     request_time = time.strftime("%Y-%m-%d %H:%M:%S", time.localtime())
 
@@ -312,7 +332,7 @@ def ask_media(request, dates=None, sources=None, stance=None, model_name = "gpt-
     # OUTPUT: news4request - list of news texts for openai, news_links - list of links
     news4request, news_links = get_top_pine(request, dates=dates, sources=sources, stance=stance, model="text-embedding-ada-002", top_n=top_n, join_news=False)
     # filter news via Cohere ReRank (dates & stance for saving full results to csv)
-    news4request = cohere_rerank(request, news4request, dates=dates, stance=stance, threshold = 0.8)
+    news4request, news_links, num_news = cohere_rerank(request, news4request, news_links=news_links, dates=dates, stance=stance, threshold = 0.8)
 
     # limit number of tokens vs model
     if model_name == "gpt-3.5-turbo":
@@ -328,13 +348,13 @@ def ask_media(request, dates=None, sources=None, stance=None, model_name = "gpt-
 
     # get params for long reply
     request_params = f"Request: {request}; \nFilters: dates: {dates}; sources: {sources}; stance: {stance}"
-
+    
     if len(news4request) == 0:
         reply_text = 'Нет новостей по теме'   
         n_tokens_used = 0
         reply_cost = 0
     else:
-        reply = ask_openai(request, news4request, model_name = model_name, tokens_out = tokens_out)
+        reply = ask_openai(request, news4request, model_name = model_name, tokens_out = tokens_out, prompt_language = prompt_language)
         reply_text = reply.choices[0]['message']['content']
         n_tokens_used = reply.usage.total_tokens
         price_1K = get_price_per_1K(model_name)
@@ -354,12 +374,28 @@ def ask_media(request, dates=None, sources=None, stance=None, model_name = "gpt-
     
     # return reply for chatbot. If full_reply = False - return only reply_text
     if full_reply == False:
-        return reply_text
+        return reply_text, num_news, news_links
     else:
-        return request_params + "\n" + "Cost per request: " + str(round(reply_cost,3)) + ". Tokens used: " + str(n_tokens_used) + "\n\n" + reply_text + "\n\n" + str(news_links)
+        return request_params + "\n" + "Cost per request: " + str(round(reply_cost,3)) + ". Tokens used: " + str(n_tokens_used) + \
+            "N of filtered news: "+ str(num_news) + "\n\n" + reply_text + "\n\n" + str(news_links)
+
+# MAKE SUMMARIES for given topic and dates (iterate over stances). Returns 3 dictionaries: summary_dict, num_dict, links_dict.
+def make_summaries(topic, dates):
+    # collect summaries for each stance
+    summary_dict = {}
+    num_dict = {}
+    links_dict = {}
+    for stance in ['tv', 'voenkor', 'inet propaganda', 'moder', 'altern']:
+        reply_text, num_news, news_links = ask_media(request=topic, dates=dates, stance=[stance], full_reply=False, top_n=20, prompt_language="ru_fl")
+        summary_dict[stance] = reply_text
+        num_dict[stance] = num_news
+        links_dict[stance] = news_links
+        print(f"Summary for stance {stance} added.")
+        time.sleep(0.5)
+    return summary_dict, num_dict, links_dict
 
 # COMPARE STANCES
-def compare_stances(request, summaries_list, model_name = "gpt-3.5-turbo", tokens_out = 1500, dates = None, stance = None, sources = None, full_reply = True):
+def compare_stances(request, summaries_list, model_name = "gpt-4-1106-preview", tokens_out = 1500, dates = None, stance = None, sources = None, full_reply = True):
     # check request time
     request_time = time.strftime("%Y-%m-%d %H:%M:%S", time.localtime())
 
@@ -370,20 +406,37 @@ The structure of the texts is as follows:\
 You task is to analyse what is similar and what is different in all these texts. First, tell what is similar. Then tell the differences for each source. \
 \nОтвечай только на русском. "
 
-    system_content_ru = f"Тебе будут представлены несколько текстов из источников на одну тему: {request} \
+    system_content_ru = f"""Тебе будут представлены несколько текстов из источников на одну тему: {request} \
 Структура текстов следующая:\
 1) в [] указан источник\
 2) далее идет текст на тему выше.\
-Твоя задача - проанализировать, что общего и что разного в этих текстах. Сначала скажи, что общего. \n\
-Затем, для каждого источника, скажи, в чем разница в формате: [истчоник] - в чем отличия.\
-\nВсего не более 1500 символов."
+Твоя задача - проанализировать, что общего и что разного в этих текстах. Сначала скажи, что общего в формате [общее] - что общего. \n\
+Затем, для каждого источника, скажи, какая дополнительная информация в неи указана в формате: [истчоник] - дополнительная информация, без вводных фраз и общих оборотов (или "ничего дополнительного").\
+\nВсего не более 1500 символов."""
+
+# пример json без указания конкретноых источиков и текстов
+    system_content_ru_json = f"""
+Тебе будут представлены несколько текстов из источников на одну тему: {request} \
+Структура данных тебе текстов следующая:\
+1) в [] указан источник\
+2) далее идет текст на тему выше.\
+Твоя задача - проанализировать, что общего и что разного в этих текстах. 
+Сначала напиши, общего. 
+Затем, для каждого источника, укажи, какую важную дополнительную информацию он сообщает (или "ничего дополнительного"). 
+Выведи ответ в json-формате следующего вида:\
+    "общее": "общая информация",
+    "источник1": "дополнительная информация из источника 1",
+    "источник2": "дополнительная информация из источника 2"
+Ответ:
+"""
 
     reply = openai.ChatCompletion.create(
     model = model_name,
+    response_format = { "type": "json_object" },
     messages=[
             {
             "role": "system",
-            "content": system_content_ru
+            "content": system_content_ru_json
             },
             {
             "role": "user",

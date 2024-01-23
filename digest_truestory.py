@@ -23,8 +23,8 @@ api_id = credentials['api_id']
 api_hash = credentials['api_hash']
 phone = credentials['phone']
 
-# channel_id_test - bubble_burst
-channel_id = credentials['channel_id_test']
+# channel_id_test - bubble_burst. channel_id - working channel (news_narratives). 
+channel_id = credentials['channel_id']
 
 # TELEGRAM CLIENT SESSION
 session_path = current_dir+'/session/'
@@ -80,7 +80,7 @@ if header_text is None:
 # rest of the script
 
 ## RAG, COMPARE & SEND to TG channel
-# dates for filtering
+# dates for pinecone filtering
 dates = []
 dates.append((datetime.today() - timedelta(days=days_offset)).strftime('%Y-%m-%d'))
 dates.append((datetime.today() + timedelta(days=1)).strftime('%Y-%m-%d'))
@@ -102,7 +102,7 @@ model_name = "gpt-3.5-turbo"
 price_1K = utils.get_price_per_1K(model_name)
 
 # send header to TG channel
-header_text = header_text + f"({date})"
+header_text = header_text + f" ({date})"
 head_len = len(header_text)
 header = f"{'='*head_len}\n{header_text}\n{'='*head_len}"
 
@@ -112,23 +112,27 @@ async def send_header(client):
 async def main(client):
     for i, topic in enumerate(cleaned_texts):
         print(f"Starting opeani summary of topic #{i}: {cleaned_texts[i][:40]}")
-        # get summaries for all stances
-        summary_list = []
-        for stance in ['tv', 'voenkor', 'inet propaganda', 'moder', 'altern']:
-            reply_text = utils.ask_media(topic, dates=dates, stance=[stance], model_name = model_name, tokens_out = n_tokens_out, full_reply = full_reply)
-            summary_list.append(str([stance])+ "\n" + reply_text)
-            # status update
-            print(f"Summary for stance {stance} added.")
-            time.sleep(1)
+        client.parse_mode = 'html'
 
-        summary_list = '\n\n'.join(summary_list)
-        # compare summaries (text w/o params)
-        compare_reply = utils.compare_stances(topic, summary_list, model_name = model_name, dates=dates, full_reply = False)
-        print("Finished opeani comparison of stances")
-        print(compare_reply)
+        # get summaries & links for each stance
+        summary_dict, num_dict, links_dict = utils.make_summaries(topic, dates)
+        # compare stances
+        summary_string = '\n'.join([f'[{key}]: {value}' for key, value in summary_dict.items() if num_dict[key] != 0]) # string for openai comparison (only non-empty stances)
+        bulk_compare_json = utils.compare_stances(topic, summary_string, dates=dates, full_reply=False)
+        bulk_compare_dict = json.loads(bulk_compare_json) # convert to dict
+        tot_num = sum(num_dict.values()) # total number of news
+        # assemble TG post:
+        post = []
+        # common ground
+        post.append(f"<b><u>Общее</u></b> (кол-во новостей: {tot_num}): {bulk_compare_dict['общее']}")
+        # differences
+        for stance, num_news in num_dict.items():
+            if num_news == 0:
+                post.append(f"<b><u>{stance}</u></b>: нет новостей по теме")
+            links = ", ".join([f"<a href='{link}'>{str(i+1)}</a>" for i, link in enumerate(links_dict[stance][:5])])
+            post.append(f"<b><u>{stance}</u></b> ({num_news}, ссылки: {links}): {bulk_compare_dict[stance]}")
 
-        # combine reply
-        result = f"Тема: {topic}: \n\n{compare_reply}"
+        result = '\n\n'.join(post)
 
         # send compare_reply to TG channel
         await client.send_message(channel_id, result)
