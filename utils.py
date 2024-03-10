@@ -40,11 +40,6 @@ credentials_path = os.path.join(current_dir, 'keys/api_keys.json')
 with open(credentials_path) as f:
     credentials = json.loads(f.read())  
 
-# load TG credentials
-api_id = credentials['api_id'] 
-api_hash = credentials['api_hash']
-phone = credentials['phone']
-
 #load openai credentials
 openai_key = credentials['openai_key']
 

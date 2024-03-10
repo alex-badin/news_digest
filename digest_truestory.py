@@ -21,10 +21,9 @@ with open(keys_path+'api_keys.json') as f:
 # load TG credentials
 api_id = credentials['api_id']
 api_hash = credentials['api_hash']
-phone = credentials['phone']
 
 # channel_id_test - bubble_burst. channel_id - working channel (news_narratives). 
-channel_id = credentials['channel_id']
+channel_id = credentials['channel_id_test2']
 
 # TELEGRAM CLIENT SESSION
 session_path = current_dir+'/session/'
@@ -85,11 +84,12 @@ dates = []
 dates.append((datetime.today() - timedelta(days=days_offset)).strftime('%Y-%m-%d'))
 dates.append((datetime.today() + timedelta(days=1)).strftime('%Y-%m-%d'))
 
-# Apply the function to your list
+# prepare topics and header
 cleaned_texts = [utils.clean_text_topic(text) for text in text_list]
 header_text = utils.clean_text_topic(header_text)
 if days_offset == 7: header_text = header_text + f" ({date})" # add dates to header if weekly digest
-head_len = len(header_text)
+header_text = header_text + f" ({date})"
+head_len = max(len(header_text), 30) # max=30 due to smartphone screen width
 header = f"{'='*head_len}\n{header_text}\n{'='*head_len}"
 
 ic(header_text, cleaned_texts)
@@ -100,11 +100,6 @@ full_reply = False
 
 model_name = "gpt-3.5-turbo"
 price_1K = utils.get_price_per_1K(model_name)
-
-# send header to TG channel
-header_text = header_text + f" ({date})"
-head_len = len(header_text)
-header = f"{'='*head_len}\n{header_text}\n{'='*head_len}"
 
 async def send_header(client):
     await client.send_message(channel_id, header)
@@ -136,7 +131,7 @@ async def main(client):
         result = '\n\n'.join(post)
 
         # send compare_reply to TG channel
-        await client.send_message(channel_id, result)
+        await client.send_message(channel_id, result, link_preview=False)
         print(f"Sent to TG channel topic {i}")
         # Cohere trial key is limited to 10 API calls / minute => sleep for 30 sec per 5 calls (stances).
         time.sleep(30)
