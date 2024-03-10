@@ -28,7 +28,8 @@ from tenacity import (
 )  # for exponential backoff
 
 import openai
-import pinecone
+import cohere
+from pinecone import Pinecone
 import cohere
 from icecream import ic
 
@@ -42,18 +43,22 @@ with open(credentials_path) as f:
 
 #load openai credentials
 openai_key = credentials['openai_key']
+# load cohere credentials
+cohere_key = credentials['cohere_key_prod']
+co = cohere.Client(cohere_key)
 
 # load pinecone credentials
 pine_key = credentials['pine_key']
 pine_env = credentials['pine_env']
 
 # INIT PINECONE
-pinecone.init(api_key=pine_key, environment=pine_env)
-index_name = 'tg-news'
-index = pinecone.Index(index_name)
+# initialize pinecone
+pc = Pinecone(pine_key)
+index_name = "news-db"
+index = pc.Index(index_name)
 
 # INIT OPENAI
-openai.api_key = openai_key
+# openai.api_key = openai_key
 
 # INIT COHERE
 cohere_key = credentials['cohere_key']
@@ -132,16 +137,21 @@ def clean_text(text):
     return text
 
 
-#==== RAG (RETRIEVAL AUGMENTATION) FUNCTIONS (based on pinecone & openai) =======
+#==== RAG (RETRIEVAL AUGMENTATION) FUNCTIONS (based on pinecone & openai/cohere) =======
 # embed request
-def get_embedding(text, model="text-embedding-ada-002"):
-   text = text.replace("\n", " ")
-   return openai.Embedding.create(input = [text], model=model)['data'][0]['embedding']
+@retry(stop=stop_after_attempt(6), wait=wait_random_exponential(multiplier=1, max=10))
+def get_embedding(text, model = 'embed-multilingual-v3.0', input_type = 'clustering'):
+    response = co.embed(
+        texts = text,
+        model = model,
+        input_type = input_type
+                )
+    return response.embeddings[0]
 
 # get similar news from PINECONE with filters (dates=None, sources=None, stance=None)
 @retry(stop=stop_after_attempt(6), wait=wait_random_exponential(multiplier=1, max=10))
 def get_top_pine(request: str=None, request_emb=None, dates: ['%Y-%m-%d',['%Y-%m-%d']]=None, sources=None, stance=None\
-                 , model="text-embedding-ada-002", top_n=10, join_news=True):
+                 , model="embed-multilingual-v3.0", top_n=10, join_news=True):
     """
     Returns top news articles related to a given request and stance, within a specified date range.
 
@@ -325,7 +335,7 @@ def ask_media(request: str, dates: ['%Y-%m-%d',['%Y-%m-%d']] = None, sources = N
     # get top news
     # INPUT: request, dates, sources, stance
     # OUTPUT: news4request - list of news texts for openai, news_links - list of links
-    news4request, news_links = get_top_pine(request, dates=dates, sources=sources, stance=stance, model="text-embedding-ada-002", top_n=top_n, join_news=False)
+    news4request, news_links = get_top_pine(request, dates=dates, sources=sources, stance=stance, model="embed-multilingual-v3.0", top_n=top_n, join_news=False)
     # filter news via Cohere ReRank (dates & stance for saving full results to csv)
     if news4request == 'No matches':
         news4request = []
