@@ -327,7 +327,11 @@ def ask_media(request: str, dates: ['%Y-%m-%d',['%Y-%m-%d']] = None, sources = N
     # OUTPUT: news4request - list of news texts for openai, news_links - list of links
     news4request, news_links = get_top_pine(request, dates=dates, sources=sources, stance=stance, model="text-embedding-ada-002", top_n=top_n, join_news=False)
     # filter news via Cohere ReRank (dates & stance for saving full results to csv)
-    news4request, news_links, num_news = cohere_rerank(request, news4request, news_links=news_links, dates=dates, stance=stance, threshold = 0.8)
+    if news4request == 'No matches':
+        news4request = []
+        num_news = 0
+    else:
+        news4request, news_links, num_news = cohere_rerank(request, news4request, news_links=news_links, dates=dates, stance=stance, threshold = 0.8)
 
     # limit number of tokens vs model
     if model_name == "gpt-3.5-turbo":
@@ -369,6 +373,7 @@ def ask_media(request: str, dates: ['%Y-%m-%d',['%Y-%m-%d']] = None, sources = N
     
     # return reply for chatbot. If full_reply = False - return only reply_text
     if full_reply == False:
+        ic(stance, reply_text, num_news, news_links)
         return reply_text, num_news, news_links
     else:
         return request_params + "\n" + "Cost per request: " + str(round(reply_cost,3)) + ". Tokens used: " + str(n_tokens_used) + \
@@ -422,6 +427,7 @@ You task is to analyse what is similar and what is different in all these texts.
     "общее": "общая информация",
     "источник1": "дополнительная информация из источника 1",
     "источник2": "дополнительная информация из источника 2"
+Названия источников нужно указывать строго так, как они указаны в скобках.
 Ответ:
 """
 

@@ -87,9 +87,9 @@ dates.append((datetime.today() + timedelta(days=1)).strftime('%Y-%m-%d'))
 # prepare topics and header
 cleaned_texts = [utils.clean_text_topic(text) for text in text_list]
 header_text = utils.clean_text_topic(header_text)
-if days_offset == 7: header_text = header_text + f" ({date})" # add dates to header if weekly digest
-header_text = header_text + f" ({date})"
-head_len = max(len(header_text), 30) # max=30 due to smartphone screen width
+if days_offset == 7: header_text = header_text + f" ({dates})" # add dates to header if weekly digest
+else: header_text = header_text + f" ({date})"
+head_len = min(len(header_text), 30) # min=30 due to smartphone screen width
 header = f"{'='*head_len}\n{header_text}\n{'='*head_len}"
 
 ic(header_text, cleaned_texts)
@@ -111,11 +111,11 @@ async def main(client):
 
         # get summaries & links for each stance
         summary_dict, num_dict, links_dict = utils.make_summaries(topic, dates)
+        tot_num = sum(num_dict.values()) # total number of news
         # compare stances
         summary_string = '\n'.join([f'[{key}]: {value}' for key, value in summary_dict.items() if num_dict[key] != 0]) # string for openai comparison (only non-empty stances)
         bulk_compare_json = utils.compare_stances(topic, summary_string, dates=dates, full_reply=False)
         bulk_compare_dict = json.loads(bulk_compare_json) # convert to dict
-        tot_num = sum(num_dict.values()) # total number of news
         # assemble TG post:
         post = []
         # common ground
