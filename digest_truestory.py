@@ -40,7 +40,9 @@ if not os.path.exists(truestory_ids):
 ## LOAD NEWS DIGEST from TrueStory: get last message (assumption - script runs every hour and should not miss any message)
 async def get_last_message(api_id, api_hash, truestory_ids):
     async with TelegramClient(session_path+'session_digest', api_id, api_hash) as client:
-        messages = await client.get_messages('truesummary', limit=1)
+        channel = await client.get_entity('truesummary')
+        messages = await client.get_messages(channel, limit=1)
+        # messages = await client.get_messages('truesummary', limit=1)
         message = messages[0]
     # get key params from message
     text = message.text
