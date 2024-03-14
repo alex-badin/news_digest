@@ -58,7 +58,7 @@ index_name = "news-db"
 index = pc.Index(index_name)
 
 # INIT OPENAI
-# openai.api_key = openai_key
+openai.api_key = openai_key
 
 # INIT COHERE
 cohere_key = credentials['cohere_key']
