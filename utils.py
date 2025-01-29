@@ -19,37 +19,31 @@ import time
 import unicodedata
 from datetime import datetime, timedelta
 import os
+from dotenv import load_dotenv
 import csv
-
 from tenacity import (
     retry,
     stop_after_attempt,
     wait_random_exponential,
-)  # for exponential backoff
-
+)
 import openai
 import cohere
 from pinecone import Pinecone
-import cohere
 from icecream import ic
 
-### CREDENTIALS
-# Get the directory of the current script
-current_dir = os.path.dirname(os.path.abspath(__file__))
-credentials_path = os.path.join(current_dir, 'keys/api_keys.json')
-# Load the credentials
-with open(credentials_path) as f:
-    credentials = json.loads(f.read())  
+# Load environment variables
+load_dotenv()
 
-#load openai credentials
-openai_key = credentials['openai_key']
-# load cohere credentials
-cohere_key = credentials['cohere_key_prod']
-co = cohere.Client(cohere_key)
+# Get credentials from environment variables
+openai_key = os.getenv('OPENAI_KEY')
+cohere_key = os.getenv('COHERE_KEY')
+pine_key = os.getenv('PINE_KEY')
+index_name = os.getenv('PINE_INDEX')
 
-# load pinecone credentials
-pine_key = credentials['pine_key']
-index_name = credentials['pine_index']
+# Validate required environment variables
+if not all([openai_key, cohere_key, pine_key, index_name]):
+    print("Error: Missing required environment variables")
+    sys.exit(1)
 
 # INIT PINECONE
 # initialize pinecone
@@ -60,7 +54,6 @@ index = pc.Index(index_name)
 openai.api_key = openai_key
 
 # INIT COHERE
-cohere_key = credentials['cohere_key']
 co = cohere.Client(cohere_key)
 
 ### PARAMETERS
@@ -234,7 +227,7 @@ def get_top_pine(request: str=None, request_emb=None, dates: ['%Y-%m-%d',['%Y-%m
 
 
 def get_price_per_1K(model_name):
-    if model_name == "gpt-3.5-turbo": #4K (~10 news)
+    if model_name == "gpt-4o-mini": #4K (~10 news)
         price_1K = 0.0015 # price per 1000 characters
     if model_name == "gpt-3.5-turbo-1106": #16K (~40 news)
         price_1K = 0.0015 # price per 1000 characters
@@ -244,7 +237,7 @@ def get_price_per_1K(model_name):
         price_1K = 0.03
     elif model_name == "gpt-4-32k": #32K (~80 news)
         price_1K = 0.06
-    elif model_name == "gpt-4-1106-preview": #32K (~80 news)
+    elif model_name == "gpt-4o": #32K (~80 news)
         price_1K = 0.02
     return price_1K
 
@@ -278,7 +271,7 @@ def cohere_rerank(request: str, sim_news: list, news_links: list, dates, stance,
 
 ## Ask OpenAI - returns openai summary based on question and sample of news
 @retry(stop=stop_after_attempt(6), wait=wait_random_exponential(multiplier=1, max=10))
-def ask_openai(request: str, news4request: list, model_name = "gpt-3.5-turbo", tokens_out = 512, prompt_language = "ru"):
+def ask_openai(request: str, news4request: list, model_name = "gpt-4o-mini", tokens_out = 512, prompt_language = "ru"):
 
     system_content_en = f"You are given few short news texts in Russian. Based on these texts you need to answer the following question: {request}. \
         First, analyze if the texts provide an answer to the question. \
@@ -326,7 +319,7 @@ def ask_openai(request: str, news4request: list, model_name = "gpt-3.5-turbo", t
     return response
 
 # FUNCTION ask_media to combine all together (TO USE IN TG BOT REQUESTS): get top news, filter via cohere, ask openai for summary
-def ask_media(request: str, dates: ['%Y-%m-%d',['%Y-%m-%d']] = None, sources = None, stance: [] = None, model_name: str = "gpt-3.5-turbo", \
+def ask_media(request: str, dates: ['%Y-%m-%d',['%Y-%m-%d']] = None, sources = None, stance: [] = None, model_name: str = "gpt-4o-mini", \
               tokens_out: int = 512, full_reply: bool = True, top_n: int = top_n, prompt_language = "ru_fl"):
     # check request time
     request_time = time.strftime("%Y-%m-%d %H:%M:%S", time.localtime())
@@ -360,25 +353,21 @@ def ask_media(request: str, dates: ['%Y-%m-%d',['%Y-%m-%d']] = None, sources = N
     if len(news4request) == 0:
         reply_text = 'Нет новостей по теме'   
         n_tokens_used = 0
-        reply_cost = 0
     else:
         reply = ask_openai(request, news4request, model_name = model_name, tokens_out = tokens_out, prompt_language = prompt_language)
         reply_text = reply.choices[0]['message']['content']
         n_tokens_used = reply.usage.total_tokens
-        price_1K = get_price_per_1K(model_name)
-        reply_cost = n_tokens_used / 1000 * price_1K
 
-    # write params & reply to file. If file doesn't exist - create it with headers
-    # check reply time
+    # write params & reply to file
     reply_time = time.strftime("%Y-%m-%d %H:%M:%S", time.localtime())
     
     if not os.path.isfile('openai_chatbot_digest_log.csv'):
         with open('openai_chatbot_digest_log.csv', 'a', newline='') as csvfile:
             writer = csv.writer(csvfile)
-            writer.writerow(['request', 'dates', 'sources', 'stance', 'reply_text', 'reply_cost', 'request_time', 'reply_time', 'model_name', 'n_tokens_used', 'news_links'])
+            writer.writerow(['request', 'dates', 'sources', 'stance', 'reply_text', 'request_time', 'reply_time', 'model_name', 'n_tokens_used', 'news_links'])
     with open('openai_chatbot_digest_log.csv', 'a', newline='') as csvfile:
         writer = csv.writer(csvfile)
-        writer.writerow([request, dates, sources, stance, reply_text, reply_cost, request_time, reply_time, model_name, n_tokens_used, news_links])
+        writer.writerow([request, dates, sources, stance, reply_text, request_time, reply_time, model_name, n_tokens_used, news_links])
     
     # return reply for chatbot. If full_reply = False - return only reply_text
     if full_reply == False:
@@ -404,7 +393,7 @@ def make_summaries(topic, dates):
     return summary_dict, num_dict, links_dict
 
 # COMPARE STANCES
-def compare_stances(request, summaries_list, model_name = "gpt-4-1106-preview", tokens_out = 1500, dates = None, stance = None, sources = None, full_reply = True):
+def compare_stances(request, summaries_list, model_name = "gpt-4o", tokens_out = 1500, dates = None, stance = None, sources = None, full_reply = True):
     # check request time
     request_time = time.strftime("%Y-%m-%d %H:%M:%S", time.localtime())
 

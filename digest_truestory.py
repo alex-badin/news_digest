@@ -21,7 +21,7 @@ load_dotenv()
 # Get credentials from environment variables
 api_id = os.getenv('API_ID')
 api_hash = os.getenv('API_HASH')
-channel_id = os.getenv('CHANNEL_ID_TEST2')
+channel_id = os.getenv('CHANNEL_ID')
 session_string = os.getenv('SESSION_STRING')
 
 # Validate required environment variables
@@ -29,8 +29,9 @@ if not all([api_id, api_hash, channel_id, session_string]):
     print("Error: Missing required environment variables")
     sys.exit(1)
 
-# Convert api_id to integer as it comes as string from env
+# Convert api_id and channel_id to integer as they come as strings from env
 api_id = int(api_id)
+channel_id = int(channel_id)
 
 # csv file tracking messages id
 truestory_ids = 'truestory_ids.csv'
@@ -100,11 +101,7 @@ header = f"{'='*head_len}\n{header_text}\n{'='*head_len}"
 ic(header_text, cleaned_texts)
 
 # params for summary of each stance
-n_tokens_out = 512
 full_reply = False
-
-model_name = "gpt-3.5-turbo"
-price_1K = utils.get_price_per_1K(model_name)
 
 async def send_header(client):
     await client.send_message(channel_id, header)
@@ -143,7 +140,7 @@ async def main(client):
 
 async def run():
     client = TelegramClient(StringSession(session_string), api_id, api_hash)
-    async client:
+    async with client: 
         await send_header(client)
         await main(client)
 
