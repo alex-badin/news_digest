@@ -20,7 +20,7 @@ import unicodedata
 from datetime import datetime, timedelta
 import os
 from dotenv import load_dotenv
-import csv
+import sys
 from tenacity import (
     retry,
     stop_after_attempt,
@@ -30,6 +30,7 @@ import openai
 import cohere
 from pinecone import Pinecone
 from icecream import ic
+import sqlite3
 
 # Load environment variables
 load_dotenv()
@@ -47,7 +48,7 @@ if not all([openai_key, cohere_key, pine_key, index_name]):
 
 # INIT PINECONE
 # initialize pinecone
-pc = Pinecone(pine_key)
+pc = Pinecone(api_key=pine_key)
 index = pc.Index(index_name)
 
 # INIT OPENAI
@@ -59,6 +60,113 @@ co = cohere.Client(cohere_key)
 ### PARAMETERS
 top_n = 30 # number of news to retrieve from pinecone
 list_of_stances = ['tv', 'voenkor', 'inet propaganda', 'moder', 'altern'] # possibale stances (as in pinecone DB)
+
+#==============SQL INIT==============================================
+# Add after imports
+import sqlite3
+
+def init_db():
+    conn = sqlite3.connect('news_analysis.db')
+    c = conn.cursor()
+    
+    # Vector search results
+    c.execute('''CREATE TABLE IF NOT EXISTS vector_search
+                 (id INTEGER PRIMARY KEY, request_id TEXT, timestamp TEXT,
+                  request_text TEXT, stance TEXT, score REAL, news_text TEXT, 
+                  news_link TEXT, metadata TEXT)''')
+    
+    # Reranking results
+    c.execute('''CREATE TABLE IF NOT EXISTS reranking
+                 (id INTEGER PRIMARY KEY, request_id TEXT, timestamp TEXT,
+                  news_id INTEGER, cohere_score REAL, is_relevant INTEGER,
+                  FOREIGN KEY(news_id) REFERENCES vector_search(id))''')
+    
+    # Summaries
+    c.execute('''CREATE TABLE IF NOT EXISTS summaries
+                 (id INTEGER PRIMARY KEY, request_id TEXT, timestamp TEXT,
+                  stance TEXT, summary TEXT, num_news INTEGER, 
+                  model TEXT, tokens_used INTEGER, cost REAL)''')
+    
+    # Comparisons
+    c.execute('''CREATE TABLE IF NOT EXISTS comparisons
+                 (id INTEGER PRIMARY KEY, request_id TEXT, timestamp TEXT,
+                  common_ground TEXT, comparison_json TEXT,
+                  model TEXT, tokens_used INTEGER, cost REAL)''')
+    
+    conn.commit()
+    conn.close()
+
+# Add helper functions for database operations
+def generate_request_id():
+    return datetime.now().strftime('%Y%m%d_%H%M%S_') + str(hash(str(time.time())))[-4:]
+
+def save_vector_search(request_id, request_text, stance, news_data):
+    try:
+        conn = sqlite3.connect('news_analysis.db')
+        cursor = conn.cursor()
+        timestamp = datetime.now().strftime('%Y-%m-%d %H:%M:%S')
+        
+        for news in news_data:
+            cursor.execute('''INSERT INTO vector_search 
+                        (request_id, timestamp, request_text, stance, score, 
+                         news_text, news_link, metadata)
+                        VALUES (?, ?, ?, ?, ?, ?, ?, ?)''',
+                     (request_id, timestamp, request_text, stance, 
+                      news['score'], news['summary'], news['link'], 
+                      json.dumps(news['metadata'])))
+        
+        conn.commit()
+    except sqlite3.Error as e:
+        print(f"Database error: {e}")
+        return False
+    finally:
+        if conn:
+            conn.close()
+
+def save_reranking_results(request_id, reranked_data):
+    conn = sqlite3.connect('news_analysis.db')
+    c = conn.cursor()
+    timestamp = datetime.now().strftime('%Y-%m-%d %H:%M:%S')
+    
+    for item in reranked_data.itertuples():
+        c.execute('''INSERT INTO reranking 
+                    (request_id, timestamp, news_id, cohere_score, is_relevant)
+                    VALUES (?, ?, ?, ?, ?)''',
+                 (request_id, timestamp, item.Index, 
+                  item.cohere_score, item.is_relevant))
+    
+    conn.commit()
+    conn.close()
+
+def save_summary(request_id, stance, summary, num_news, model, tokens_used, cost):
+    conn = sqlite3.connect('news_analysis.db')
+    c = conn.cursor()
+    timestamp = datetime.now().strftime('%Y-%m-%d %H:%M:%S')
+    
+    c.execute('''INSERT INTO summaries 
+                (request_id, timestamp, stance, summary, num_news, 
+                 model, tokens_used, cost)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?)''',
+             (request_id, timestamp, stance, summary, num_news, 
+              model, tokens_used, cost))
+    
+    conn.commit()
+    conn.close()
+
+def save_comparison(request_id, common_ground, comparison_data, model, tokens_used, cost):
+    conn = sqlite3.connect('news_analysis.db')
+    c = conn.cursor()
+    timestamp = datetime.now().strftime('%Y-%m-%d %H:%M:%S')
+    
+    c.execute('''INSERT INTO comparisons 
+                (request_id, timestamp, common_ground, comparison_json, 
+                 model, tokens_used, cost)
+                VALUES (?, ?, ?, ?, ?, ?, ?)''',
+             (request_id, timestamp, common_ground, json.dumps(comparison_data), 
+              model, tokens_used, cost))
+    
+    conn.commit()
+    conn.close()
 
 #==============CLEAN FUNCTIONS==============================================
 # clean topics from TrueStory
@@ -242,32 +350,22 @@ def get_price_per_1K(model_name):
     return price_1K
 
 def cohere_rerank(request: str, sim_news: list, news_links: list, dates, stance, threshold = 0.8):
-    # Cohere ReRank (Trial key is limited to 10 API calls / minute)
+    request_id = generate_request_id()
     reranked_docs = co.rerank(model="rerank-multilingual-v2.0", query=request, documents=sim_news)
 
-    # create a dataframe with news and cohere results)
     df_reranked = pd.DataFrame({'news': sim_news, 'links': news_links})
     for i in range(len(reranked_docs.results)):
         index = reranked_docs.results[i].index
         df_reranked.loc[index, 'cohere_score'] = reranked_docs.results[i].relevance_score
         df_reranked.loc[index, 'is_relevant'] = 1 if reranked_docs.results[i].relevance_score > threshold else 0
     
-    # SAVE reranked news to csv (add request, dates, sources, stance)
-    df_reranked['request'] = request
-    df_reranked['dates'] = str(dates)
-    df_reranked['stance'] = str(stance)
-    # create csv if it doesn't exist
-    if not os.path.isfile('cohere_reranked.csv'):
-        df_reranked.to_csv('cohere_reranked.csv', index=False)
-    # append to csv
-    else:
-        df_reranked.to_csv('cohere_reranked.csv', mode='a', header=False, index=False)
-        
-    # get only relevant news and convert to list
+    # Save to database instead of CSV
+    save_reranking_results(request_id, df_reranked)
+    
     news4request = df_reranked[df_reranked['is_relevant']==1]['news'].tolist()
     news_links = df_reranked[df_reranked['is_relevant']==1]['links'].tolist()
     num_news = len(news4request)
-    return news4request, news_links, num_news
+    return news4request, news_links, num_news, request_id
 
 ## Ask OpenAI - returns openai summary based on question and sample of news
 @retry(stop=stop_after_attempt(6), wait=wait_random_exponential(multiplier=1, max=10))
@@ -286,10 +384,12 @@ def ask_openai(request: str, news4request: list, model_name = "gpt-4o-mini", tok
         \nНе более 1000 символов."
     
     # prompt for news filtered by cohere
-    system_content_ru_fl = f"Тебе будут представлены несколько новостей по теме {request}. \
-        Твоя задача - собрать информацию из этих текстов, касающуюся {request}.
-        На основе этой информации сделай краткое описание, которое передаёт суть всех этих текстов, в виде нумерованных пунктов. \
-        Описание должно быть короче 500 символов."
+    system_content_ru_fl = f"""
+    Тебе будут представлены несколько новостей по теме {request}. \
+    Твоя задача - собрать информацию из этих текстов, касающуюся {request}. \
+    На основе этой информации сделай краткое описание, которое передаёт суть всех этих текстов, в виде нумерованных пунктов. \
+    Описание должно быть короче 500 символов.
+    """
 
     if prompt_language == "en": system_content = system_content_en
     elif prompt_language == "ru": system_content = system_content_ru
@@ -322,6 +422,7 @@ def ask_openai(request: str, news4request: list, model_name = "gpt-4o-mini", tok
 # FUNCTION ask_media to combine all together (TO USE IN TG BOT REQUESTS): get top news, filter via cohere, ask openai for summary
 def ask_media(request: str, dates: ['%Y-%m-%d',['%Y-%m-%d']] = None, sources = None, stance: [] = None, model_name: str = "gpt-4o-mini", \
               tokens_out: int = 512, full_reply: bool = True, top_n: int = top_n, prompt_language = "ru_fl"):
+    request_id = generate_request_id()
     # check request time
     request_time = time.strftime("%Y-%m-%d %H:%M:%S", time.localtime())
 
@@ -334,7 +435,7 @@ def ask_media(request: str, dates: ['%Y-%m-%d',['%Y-%m-%d']] = None, sources = N
         news4request = []
         num_news = 0
     else:
-        news4request, news_links, num_news = cohere_rerank(request, news4request, news_links=news_links, dates=dates, stance=stance, threshold = 0.8)
+        news4request, news_links, num_news, request_id = cohere_rerank(request, news4request, news_links=news_links, dates=dates, stance=stance, threshold = 0.8)
 
     # limit number of tokens vs model
     if model_name == "gpt-3.5-turbo":
@@ -362,13 +463,11 @@ def ask_media(request: str, dates: ['%Y-%m-%d',['%Y-%m-%d']] = None, sources = N
     # write params & reply to file
     reply_time = time.strftime("%Y-%m-%d %H:%M:%S", time.localtime())
     
-    if not os.path.isfile('openai_chatbot_digest_log.csv'):
-        with open('openai_chatbot_digest_log.csv', 'a', newline='') as csvfile:
-            writer = csv.writer(csvfile)
-            writer.writerow(['request', 'dates', 'sources', 'stance', 'reply_text', 'request_time', 'reply_time', 'model_name', 'n_tokens_used', 'news_links'])
-    with open('openai_chatbot_digest_log.csv', 'a', newline='') as csvfile:
-        writer = csv.writer(csvfile)
-        writer.writerow([request, dates, sources, stance, reply_text, request_time, reply_time, model_name, n_tokens_used, news_links])
+    # Replace CSV logging with database storage
+    if len(news4request) > 0:
+        save_summary(request_id, stance[0] if stance else None, reply_text, 
+                    num_news, model_name, n_tokens_used, 
+                    (n_tokens_used / 1000 * get_price_per_1K(model_name)))
     
     # return reply for chatbot. If full_reply = False - return only reply_text
     if full_reply == False:
@@ -395,6 +494,7 @@ def make_summaries(topic, dates):
 
 # COMPARE STANCES
 def compare_stances(request, summaries_list, model_name = "gpt-4o", tokens_out = 1500, dates = None, stance = None, sources = None, full_reply = True):
+    request_id = generate_request_id()
     # check request time
     request_time = time.strftime("%Y-%m-%d %H:%M:%S", time.localtime())
 
@@ -456,13 +556,12 @@ You task is to analyse what is similar and what is different in all these texts.
     reply_cost = n_tokens_used / 1000 * price_1K
     reply_time = time.strftime("%Y-%m-%d %H:%M:%S", time.localtime())
 
-    if not os.path.isfile('openai_chatbot.csv'):
-        with open('openai_chatbot.csv', 'a', newline='') as csvfile:
-            writer = csv.writer(csvfile)
-            writer.writerow(['request', 'dates', 'sources', 'stance', 'reply_text', 'reply_cost', 'request_time', 'reply_time', 'model_name', 'n_tokens_used', 'news_links'])
-    with open('openai_chatbot.csv', 'a', newline='') as csvfile:
-        writer = csv.writer(csvfile)
-        writer.writerow([request, dates, sources, 'all_summary', reply_text, reply_cost, request_time, reply_time, model_name, n_tokens_used, ""])
+    # Replace CSV logging with database storage
+    reply_data = json.loads(reply_text)
+    save_comparison(request_id, reply_data.get('общее', ''), reply_data,
+                   model_name, n_tokens_used, 
+                   (n_tokens_used / 1000 * get_price_per_1K(model_name)))
+    
     if full_reply == False:
         return reply_text
     return request_params + "\n\n" + reply_text

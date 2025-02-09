@@ -14,6 +14,7 @@ from icecream import ic
 
 import utils
 import sys
+from utils import init_db
 
 # Load environment variables
 load_dotenv()
@@ -39,6 +40,13 @@ if not os.path.exists(truestory_ids):
     with open(truestory_ids, 'w', newline='') as csvfile:
         writer = csv.writer(csvfile)
         writer.writerow(['id', 'date'])
+
+# Initialize database
+try:
+    init_db()
+except Exception as e:
+    print(f"Failed to initialize database: {e}")
+    sys.exit(1)
 
 ## LOAD NEWS DIGEST from TrueStory: get last message (assumption - script runs every hour and should not miss any message)
 async def get_last_message(api_id, api_hash, truestory_ids):
