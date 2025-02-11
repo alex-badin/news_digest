@@ -66,7 +66,8 @@ list_of_stances = ['tv', 'voenkor', 'inet propaganda', 'moder', 'altern'] # poss
 import sqlite3
 
 def init_db():
-    conn = sqlite3.connect('news_analysis.db')
+    conn = sqlite3.connect('news_analysis.db', isolation_level=None)
+    conn.execute('PRAGMA encoding = "UTF-8"')
     c = conn.cursor()
     
     # Vector search results
@@ -307,7 +308,7 @@ def get_top_pine(request: str=None, request_emb=None, dates: ['%Y-%m-%d',['%Y-%m
     # ic(index.query(request_emb, top_k=top_n, include_metadata=True, filter=filter)) # check pinecone with icecream
     res = index.query(vector=request_emb, top_k=top_n, include_metadata=True, filter=filter)
     # save results to txt-file
-    with open('pinecone_results.txt', 'w', encoding='utf-8') as f:
+    with open('pinecone_results.txt', 'w', encoding='utf-8', errors='replace') as f:
         f.write(str(res.to_dict()))
     # check if results are empty
     if res.to_dict()['matches'] == []:
