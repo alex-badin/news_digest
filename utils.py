@@ -399,7 +399,7 @@ def ask_openai(request: str, news4request: list, model_name = "gpt-4o-mini", tok
     if type(news4request) == list:
         news4request = '\n'.join(news4request)
 
-    response = openai.ChatCompletion.create(
+    response = openai.chat.completions.create(
         model = model_name,
         messages=[
             {
@@ -416,7 +416,7 @@ def ask_openai(request: str, news4request: list, model_name = "gpt-4o-mini", tok
         top_p=1,
         frequency_penalty=0,
         presence_penalty=0
-        )
+    )
     return response
 
 # FUNCTION ask_media to combine all together (TO USE IN TG BOT REQUESTS): get top news, filter via cohere, ask openai for summary
@@ -455,10 +455,13 @@ def ask_media(request: str, dates: ['%Y-%m-%d',['%Y-%m-%d']] = None, sources = N
     if len(news4request) == 0:
         reply_text = 'Нет новостей по теме'   
         n_tokens_used = 0
+        reply_cost = 0
     else:
         reply = ask_openai(request, news4request, model_name = model_name, tokens_out = tokens_out, prompt_language = prompt_language)
-        reply_text = reply.choices[0]['message']['content']
+        reply_text = reply.choices[0].message.content
         n_tokens_used = reply.usage.total_tokens
+        price_1K = get_price_per_1K(model_name)
+        reply_cost = n_tokens_used / 1000 * price_1K
 
     # write params & reply to file
     reply_time = time.strftime("%Y-%m-%d %H:%M:%S", time.localtime())
@@ -530,27 +533,27 @@ You task is to analyse what is similar and what is different in all these texts.
 Ответ:
 """
 
-    reply = openai.ChatCompletion.create(
-    model = model_name,
-    response_format = { "type": "json_object" },
-    messages=[
-            {
-            "role": "system",
-            "content": system_content_ru_json
-            },
-            {
-            "role": "user",
-            "content": summaries_list
-            }
-        ],
-        temperature=0,
-        max_tokens=tokens_out,
-        top_p=1,
-        frequency_penalty=0,
-        presence_penalty=0
+    reply = openai.chat.completions.create(
+        model = model_name,
+        response_format = { "type": "json_object" },
+        messages=[
+                {
+                "role": "system",
+                "content": system_content_ru_json
+                },
+                {
+                "role": "user",
+                "content": summaries_list
+                }
+            ],
+            temperature=0,
+            max_tokens=tokens_out,
+            top_p=1,
+            frequency_penalty=0,
+            presence_penalty=0
         )
     request_params = f"Topic: {request}"
-    reply_text = reply.choices[0]['message']['content']
+    reply_text = reply.choices[0].message.content  # Updated this line
     n_tokens_used = reply.usage.total_tokens
     price_1K = get_price_per_1K(model_name)
     reply_cost = n_tokens_used / 1000 * price_1K
