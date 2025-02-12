@@ -307,9 +307,9 @@ def get_top_pine(request: str=None, request_emb=None, dates: ['%Y-%m-%d',['%Y-%m
     # ic(request_emb, top_n, filter) # check inputs with icecream
     # ic(index.query(request_emb, top_k=top_n, include_metadata=True, filter=filter)) # check pinecone with icecream
     res = index.query(vector=request_emb, top_k=top_n, include_metadata=True, filter=filter)
-    # save results to txt-file
+    # save results to txt-file with forced UTF-8
     with open('pinecone_results.txt', 'w', encoding='utf-8', errors='replace') as f:
-        f.write(str(res.to_dict()))
+        f.write(str(res.to_dict()).encode('utf-8', errors='replace').decode('utf-8'))
     # check if results are empty
     if res.to_dict()['matches'] == []:
         print('No matches')
