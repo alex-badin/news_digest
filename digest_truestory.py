@@ -48,6 +48,9 @@ except Exception as e:
     print(f"Failed to initialize database: {e}")
     sys.exit(1)
 
+# Reconfigure stdout to use UTF-8
+sys.stdout.reconfigure(encoding='utf-8')
+
 ## LOAD NEWS DIGEST from TrueStory: get last message (assumption - script runs every hour and should not miss any message)
 async def get_last_message(api_id, api_hash, truestory_ids):
     client = TelegramClient(StringSession(session_string), api_id, api_hash)
