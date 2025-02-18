@@ -94,6 +94,10 @@ def init_db():
                   common_ground TEXT, comparison_json TEXT,
                   model TEXT, tokens_used INTEGER, cost REAL)''')
     
+    # New table for full run logging
+    c.execute('''CREATE TABLE IF NOT EXISTS full_run
+                 (run_id TEXT PRIMARY KEY, timestamp TEXT, data TEXT)''')
+    
     conn.commit()
     conn.close()
 
@@ -166,6 +170,16 @@ def save_comparison(request_id, common_ground, comparison_data, model, tokens_us
              (request_id, timestamp, common_ground, json.dumps(comparison_data), 
               model, tokens_used, cost))
     
+    conn.commit()
+    conn.close()
+
+def save_full_run(run_data):
+    import sqlite3
+    conn = sqlite3.connect('news_analysis.db')
+    c = conn.cursor()
+    timestamp = datetime.now().strftime('%Y-%m-%d %H:%M:%S')
+    c.execute('''INSERT INTO full_run (run_id, timestamp, data)
+                 VALUES (?, ?, ?)''', (run_data['run_id'], timestamp, json.dumps(run_data)))
     conn.commit()
     conn.close()
 

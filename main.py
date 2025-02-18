@@ -14,7 +14,7 @@ from icecream import ic
 
 import utils
 import sys
-from utils import init_db
+from utils import init_db, generate_request_id, save_full_run
 
 # Load environment variables
 load_dotenv()
@@ -93,6 +93,18 @@ if header_text is None:
     print("No new messages. Exiting.")
     sys.exit()
 
+# After TrueStory message is processed, generate a run_id and store true_story data for the run
+run_id = generate_request_id()
+true_story_data = {
+    "header": header_text,
+    "text_list": text_list,
+    "message_id": message_id,
+    "date": date,
+    "days_offset": days_offset
+}
+# Initialize a list to accumulate topic processing data
+topics_run_data = []
+
 # rest of the script
 
 ## RAG, COMPARE & SEND to TG channel
@@ -118,35 +130,44 @@ async def send_header(client):
     await client.send_message(channel_id, header)
 
 async def main(client):
+    global topics_run_data  # to accumulate run data
     for i, topic in enumerate(cleaned_texts):
-        print(f"Starting opeani summary of topic #{i}: {cleaned_texts[i][:40]}")
+        print(f"Starting OpenAI summary of topic #{i}: {topic[:40]}")
         client.parse_mode = 'html'
 
         # get summaries & links for each stance
         summary_dict, num_dict, links_dict = utils.make_summaries(topic, dates)
-        tot_num = sum(num_dict.values()) # total number of news
+        tot_num = sum(num_dict.values())  # total number of news
         # compare stances
-        summary_string = '\n'.join([f'[{key}]: {value}' for key, value in summary_dict.items() if num_dict[key] != 0]) # string for openai comparison (only non-empty stances)
+        summary_string = '\n'.join([f'[{key}]: {value}' for key, value in summary_dict.items() if num_dict[key] != 0])
         bulk_compare_json = utils.compare_stances(topic, summary_string, dates=dates, full_reply=False)
-        bulk_compare_dict = json.loads(bulk_compare_json) # convert to dict
+        bulk_compare_dict = json.loads(bulk_compare_json)
         # assemble TG post:
         post = []
-        # common ground
         post.append(f"<b><u>Общее</u></b> (кол-во новостей: {tot_num}): {bulk_compare_dict['общее']}")
-        # differences
         for stance, num_news in num_dict.items():
             if num_news == 0:
                 post.append(f"<b><u>{stance}</u></b>: нет новостей по теме")
                 continue
             links = ", ".join([f"<a href='{link}'>{str(i+1)}</a>" for i, link in enumerate(links_dict[stance][:5])])
             post.append(f"<b><u>{stance}</u></b> ({num_news}, ссылки: {links}): {bulk_compare_dict[stance]}")
-
         result = '\n\n'.join(post)
+
+        # Save interim data for this topic into topics_run_data
+        topics_run_data.append({
+            "topic": topic,
+            "summaries": {
+                "summary_dict": summary_dict,
+                "num_dict": num_dict,
+                "links_dict": links_dict
+            },
+            "comparison": bulk_compare_json,
+            "final_post": result
+        })
 
         # send compare_reply to TG channel
         await client.send_message(channel_id, result, link_preview=False)
         print(f"Sent to TG channel topic {i}")
-        # Cohere trial key is limited to 10 API calls / minute => sleep for 30 sec per 5 calls (stances).
         time.sleep(30)
 
 async def run():
@@ -156,6 +177,14 @@ async def run():
         await main(client)
 
 asyncio.run(run())
+
+# Store full run information to database
+full_run_data = {
+    "run_id": run_id,
+    "true_story": true_story_data,
+    "topic_data": topics_run_data
+}
+save_full_run(full_run_data)
 
 # add message id to csv file to not process it again
 with open(truestory_ids, 'a', newline='') as csvfile:

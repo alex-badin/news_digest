@@ -24,6 +24,7 @@ build/
 *.sqlite
 *.db
 pinecone_results.txt
+data/
 
 # IDE specific files
 .idea/
