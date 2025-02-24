@@ -7,13 +7,13 @@ import json
 import time
 from datetime import datetime, timedelta
 import os
+import sys
 from dotenv import load_dotenv
 import csv
 import asyncio
 from icecream import ic
 
 import utils
-import sys
 from utils import init_db, generate_request_id, save_full_run
 
 # Load environment variables
@@ -143,14 +143,32 @@ async def main(client):
         bulk_compare_json = utils.compare_stances(topic, summary_string, dates=dates, full_reply=False)
         bulk_compare_dict = json.loads(bulk_compare_json)
         # assemble TG post:
+        stance_names = {
+            'tv': "📺 Российское телевидение",
+            'voenkor': "🪖 Военные корреспонденты",
+            'inet propaganda': "🏛 Проправительственные источники",
+            'moder': "⚖️ Умеренные источники",
+            'altern': "🕊 Альтернативные источники"
+        }
+        
         post = []
-        post.append(f"<b><u>Общее</u></b> (кол-во новостей: {tot_num}): {bulk_compare_dict['общее']}")
+        # Change header from "Общее" to "Новость:"
+        post.append(f"<b>Новость:</b> {bulk_compare_dict['общее']} (кол-во новостей: {tot_num})")
+        post.append("🔎 Как разные источники освещают это событие?")
         for stance, num_news in num_dict.items():
+            mapped_stance = stance_names.get(stance, stance)
             if num_news == 0:
-                post.append(f"<b><u>{stance}</u></b>: нет новостей по теме")
+                post.append(f"{mapped_stance}: нет новостей по теме")
                 continue
-            links = ", ".join([f"<a href='{link}'>{str(i+1)}</a>" for i, link in enumerate(links_dict[stance][:5])])
-            post.append(f"<b><u>{stance}</u></b> ({num_news}, ссылки: {links}): {bulk_compare_dict[stance]}")
+            # Create list of "Источник X" with hyperlinks
+            source_links = [
+                f"<a href='{link}'>Источник {i+1}</a>" 
+                for i, link in enumerate(links_dict[stance][:5])
+            ]
+            source_texts = ", ".join(source_links)
+            # Use singular/plural for "статья(и)"
+            article_word = "статья" if num_news == 1 else "статьи"
+            post.append(f"{mapped_stance}: {bulk_compare_dict[stance]}\n({num_news} {article_word}: {source_texts})")
         result = '\n\n'.join(post)
 
         # Save interim data for this topic into topics_run_data
@@ -168,7 +186,7 @@ async def main(client):
         # send compare_reply to TG channel
         await client.send_message(channel_id, result, link_preview=False)
         print(f"Sent to TG channel topic {i}")
-        time.sleep(30)
+        time.sleep(1)
 
 async def run():
     client = TelegramClient(StringSession(session_string), api_id, api_hash)
