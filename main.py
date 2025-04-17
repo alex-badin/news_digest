@@ -22,7 +22,8 @@ load_dotenv()
 # Get credentials from environment variables
 api_id = os.getenv('API_ID')
 api_hash = os.getenv('API_HASH')
-channel_id = os.getenv('CHANNEL_ID')
+# channel_id = os.getenv('CHANNEL_ID')
+channel_id = os.getenv('CHANNEL_ID_TEST2')
 session_string = os.getenv('SESSION_STRING')
 
 # Validate required environment variables
@@ -135,11 +136,13 @@ async def main(client):
         print(f"Starting OpenAI summary of topic #{i}: {topic[:40]}")
         client.parse_mode = 'html'
 
-        # get summaries & links for each stance
-        summary_dict, num_dict, links_dict = utils.make_summaries(topic, dates)
+        # get summaries, links & channel names for each stance
+        # Update the call to unpack the new channels_dict
+        summary_dict, num_dict, links_dict, channels_dict = utils.make_summaries(topic, dates)
         tot_num = sum(num_dict.values())  # total number of news
         # compare stances
         summary_string = '\n'.join([f'[{key}]: {value}' for key, value in summary_dict.items() if num_dict[key] != 0])
+        # Pass request_id from make_summaries or generate a new one if needed for compare_stances logging
         bulk_compare_json = utils.compare_stances(topic, summary_string, dates=dates, full_reply=False)
         bulk_compare_dict = json.loads(bulk_compare_json)
         # assemble TG post:
@@ -150,7 +153,7 @@ async def main(client):
             'moder': "⚖️ Умеренные источники",
             'altern': "🕊 Альтернативные источники"
         }
-        
+
         post = []
         # Change header from "Общее" to "Новость:"
         post.append(f"<b>Новость:</b> {bulk_compare_dict['общее']} (кол-во новостей: {tot_num})")
@@ -160,24 +163,31 @@ async def main(client):
             if num_news == 0:
                 post.append(f"{mapped_stance}: нет новостей по теме")
                 continue
-            # Create list of "Источник X" with hyperlinks
+            # Create list of source names with hyperlinks
+            # Use channels_dict[stance] to get the channel names
             source_links = [
-                f"<a href='{link}'>Источник {i+1}</a>" 
+                f"<a href='{link}'>{channels_dict[stance][i]}</a>"
+                # Iterate through links and corresponding channel names for the current stance, limited to 5
                 for i, link in enumerate(links_dict[stance][:5])
+                # Add a check to prevent index out of bounds if channel names list is shorter (shouldn't happen with current logic but good practice)
+                if i < len(channels_dict[stance])
             ]
             source_texts = ", ".join(source_links)
-            # Use singular/plural for "статья(и)"
-            article_word = "статья" if num_news == 1 else "статьи"
+            # Use singular/plural for "татья(и)"
+            article_word = "татья" if num_news == 1 else "татьи"
+            # Include the source texts (channel names with links) in the post
             post.append(f"{mapped_stance}: {bulk_compare_dict[stance]}\n({num_news} {article_word}: {source_texts})")
         result = '\n\n'.join(post)
 
         # Save interim data for this topic into topics_run_data
+        # Include channel names in the saved data if needed for logging/debugging
         topics_run_data.append({
             "topic": topic,
             "summaries": {
                 "summary_dict": summary_dict,
                 "num_dict": num_dict,
-                "links_dict": links_dict
+                "links_dict": links_dict,
+                "channels_dict": channels_dict # Add channel names here
             },
             "comparison": bulk_compare_json,
             "final_post": result

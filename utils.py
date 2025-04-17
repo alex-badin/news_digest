@@ -37,7 +37,7 @@ load_dotenv()
 
 # Get credentials from environment variables
 openai_key = os.getenv('OPENAI_KEY')
-cohere_key = os.getenv('COHERE_KEY')
+cohere_key = os.getenv('COHERE_KEY_PROD')
 pine_key = os.getenv('PINE_KEY')
 index_name = os.getenv('PINE_INDEX')
 
@@ -327,7 +327,8 @@ def get_top_pine(request: str=None, request_emb=None, dates: ['%Y-%m-%d',['%Y-%m
     # check if results are empty
     if res.to_dict()['matches'] == []:
         print('No matches')
-        return 'No matches', 'No matches'
+        # Return empty lists for news, links, and channel names
+        return 'No matches', 'No matches', 'No matches'
     top_sim_news = pd.DataFrame(res.to_dict()['matches']).join(pd.DataFrame(res.to_dict()['matches'])['metadata'].apply(pd.Series))
 
     # collect links & similarities
@@ -338,15 +339,18 @@ def get_top_pine(request: str=None, request_emb=None, dates: ['%Y-%m-%d',['%Y-%m
     # top_sim_news['link'] = top_sim_news.apply(lambda x: "https://t.me/"+str(x.channel_name)+"/"+str(x.msg_id)+" - "+str(round(x.score,3)), axis=1)
     # links without similarity scores
     top_sim_news['link'] = top_sim_news.apply(lambda x: "https://t.me/"+str(x.channel_name)+"/"+str(x.msg_id), axis=1)
-    
+
     # collect news & links
     if join_news:
         news4request = '\n'.join(top_sim_news['summary'].tolist())
         news_links = '\n'.join(top_sim_news['link'].tolist())
+        channel_names = '\n'.join(top_sim_news['channel_name'].tolist()) # Also join channel names if join_news is True
     else:
         news4request = top_sim_news['summary'].tolist()
         news_links = top_sim_news['link'].tolist()
-    return news4request, news_links
+        channel_names = top_sim_news['channel_name'].tolist() # Keep channel names as a list
+    # Return channel names as the third element
+    return news4request, news_links, channel_names
 
 
 def get_price_per_1K(model_name):
@@ -364,23 +368,29 @@ def get_price_per_1K(model_name):
         price_1K = 0.02
     return price_1K
 
-def cohere_rerank(request: str, sim_news: list, news_links: list, dates, stance, threshold = 0.8):
+def cohere_rerank(request: str, sim_news: list, news_links: list, channel_names: list, dates, stance, threshold = 0.8):
     request_id = generate_request_id()
     reranked_docs = co.rerank(model="rerank-multilingual-v2.0", query=request, documents=sim_news)
 
-    df_reranked = pd.DataFrame({'news': sim_news, 'links': news_links})
+    # Include channel_names in the DataFrame
+    df_reranked = pd.DataFrame({'news': sim_news, 'links': news_links, 'channel_names': channel_names})
     for i in range(len(reranked_docs.results)):
         index = reranked_docs.results[i].index
         df_reranked.loc[index, 'cohere_score'] = reranked_docs.results[i].relevance_score
         df_reranked.loc[index, 'is_relevant'] = 1 if reranked_docs.results[i].relevance_score > threshold else 0
-    
-    # Save to database instead of CSV
+
+    # Save to database
+    # Note: save_reranking_results might need adjustment if you want to store channel names there too.
     save_reranking_results(request_id, df_reranked)
-    
-    news4request = df_reranked[df_reranked['is_relevant']==1]['news'].tolist()
-    news_links = df_reranked[df_reranked['is_relevant']==1]['links'].tolist()
+
+    # Filter relevant news, links, and channel names
+    relevant_df = df_reranked[df_reranked['is_relevant']==1]
+    news4request = relevant_df['news'].tolist()
+    news_links = relevant_df['links'].tolist()
+    relevant_channel_names = relevant_df['channel_names'].tolist() # Get relevant channel names
     num_news = len(news4request)
-    return news4request, news_links, num_news, request_id
+    # Return relevant channel names as well
+    return news4request, news_links, relevant_channel_names, num_news, request_id
 
 ## Ask OpenAI - returns openai summary based on question and sample of news
 @retry(stop=stop_after_attempt(6), wait=wait_random_exponential(multiplier=1, max=10))
@@ -443,14 +453,17 @@ def ask_media(request: str, dates: ['%Y-%m-%d',['%Y-%m-%d']] = None, sources = N
 
     # get top news
     # INPUT: request, dates, sources, stance
-    # OUTPUT: news4request - list of news texts for openai, news_links - list of links
-    news4request, news_links = get_top_pine(request, dates=dates, sources=sources, stance=stance, model="embed-multilingual-v3.0", top_n=top_n, join_news=False)
+    # OUTPUT: news4request - list of news texts for openai, news_links - list of links, channel_names - list of channel names
+    news4request, news_links, channel_names = get_top_pine(request, dates=dates, sources=sources, stance=stance, model="embed-multilingual-v3.0", top_n=top_n, join_news=False)
     # filter news via Cohere ReRank (dates & stance for saving full results to csv)
     if news4request == 'No matches':
         news4request = []
+        news_links = [] # Ensure links are also empty
+        channel_names = [] # Ensure channel names are also empty
         num_news = 0
     else:
-        news4request, news_links, num_news, request_id = cohere_rerank(request, news4request, news_links=news_links, dates=dates, stance=stance, threshold = 0.8)
+        # Pass channel_names to cohere_rerank and receive filtered channel_names back
+        news4request, news_links, channel_names, num_news, request_id = cohere_rerank(request, news4request, news_links=news_links, channel_names=channel_names, dates=dates, stance=stance, threshold = 0.8)
 
     # limit number of tokens vs model
     if model_name == "gpt-3.5-turbo":
@@ -489,26 +502,32 @@ def ask_media(request: str, dates: ['%Y-%m-%d',['%Y-%m-%d']] = None, sources = N
     
     # return reply for chatbot. If full_reply = False - return only reply_text
     if full_reply == False:
-        ic(stance, reply_text, num_news, news_links)
-        return reply_text, num_news, news_links
+        ic(stance, reply_text, num_news, news_links, channel_names) # Add channel_names to ic output if needed
+        # Return channel_names along with other results
+        return reply_text, num_news, news_links, channel_names
     else:
+        # Include channel_names in the full reply if desired, or just return them separately if needed elsewhere
         return request_params + "\n" + "Cost per request: " + str(round(reply_cost,3)) + ". Tokens used: " + str(n_tokens_used) + \
-            "N of filtered news: "+ str(num_news) + "\n\n" + reply_text + "\n\n" + str(news_links)
+            "N of filtered news: "+ str(num_news) + "\n\n" + reply_text + "\n\n" + str(news_links) # Decide how to include channel_names here if needed
 
-# MAKE SUMMARIES for given topic and dates (iterate over stances). Returns 3 dictionaries: summary_dict, num_dict, links_dict.
+# MAKE SUMMARIES for given topic and dates (iterate over stances). Returns 4 dictionaries: summary_dict, num_dict, links_dict, channels_dict.
 def make_summaries(topic, dates):
     # collect summaries for each stance
     summary_dict = {}
     num_dict = {}
     links_dict = {}
+    channels_dict = {} # Add dictionary for channel names
     for stance in ['tv', 'voenkor', 'inet propaganda', 'moder', 'altern']:
-        reply_text, num_news, news_links = ask_media(request=topic, dates=dates, stance=[stance], full_reply=False, top_n=20, prompt_language="ru_fl")
+        # Receive channel_names from ask_media
+        reply_text, num_news, news_links, channel_names = ask_media(request=topic, dates=dates, stance=[stance], full_reply=False, top_n=20, prompt_language="ru_fl")
         summary_dict[stance] = reply_text
         num_dict[stance] = num_news
         links_dict[stance] = news_links
+        channels_dict[stance] = channel_names # Store channel names for the stance
         print(f"Summary for stance {stance} added.")
         time.sleep(0.5)
-    return summary_dict, num_dict, links_dict
+    # Return channels_dict as well
+    return summary_dict, num_dict, links_dict, channels_dict
 
 # COMPARE STANCES
 def compare_stances(request, summaries_list, model_name = "gpt-4o", tokens_out = 1500, dates = None, stance = None, sources = None, full_reply = True):
