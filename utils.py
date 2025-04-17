@@ -318,8 +318,8 @@ def get_top_pine(request: str=None, request_emb=None, dates: ['%Y-%m-%d',['%Y-%m
         }
 
     # query pinecone
-    # ic(request_emb, top_n, filter) # check inputs with icecream
-    # ic(index.query(request_emb, top_k=top_n, include_metadata=True, filter=filter)) # check pinecone with icecream
+    ic(top_n, filter) # check inputs with icecream
+    ic(index.query(vector=request_emb, top_k=top_n, include_metadata=True, filter=filter)) # check pinecone with icecream
     res = index.query(vector=request_emb, top_k=top_n, include_metadata=True, filter=filter)
     # save results to txt-file with forced UTF-8
     with open('pinecone_results.txt', 'w', encoding='utf-8', errors='replace') as f:
@@ -369,18 +369,33 @@ def get_price_per_1K(model_name):
     return price_1K
 
 def cohere_rerank(request: str, sim_news: list, news_links: list, channel_names: list, dates, stance, threshold = 0.8):
+    # Generate request_id specific to this rerank operation
     request_id = generate_request_id()
-    reranked_docs = co.rerank(model="rerank-multilingual-v2.0", query=request, documents=sim_news)
+    # Ensure sim_news is a list of strings
+    sim_news_str = [str(item) for item in sim_news]
+    reranked_docs = co.rerank(model="rerank-multilingual-v2.0", query=request, documents=sim_news_str)
 
     # Include channel_names in the DataFrame
     df_reranked = pd.DataFrame({'news': sim_news, 'links': news_links, 'channel_names': channel_names})
-    for i in range(len(reranked_docs.results)):
-        index = reranked_docs.results[i].index
-        df_reranked.loc[index, 'cohere_score'] = reranked_docs.results[i].relevance_score
-        df_reranked.loc[index, 'is_relevant'] = 1 if reranked_docs.results[i].relevance_score > threshold else 0
+    # Initialize cohere_score and is_relevant columns
+    df_reranked['cohere_score'] = 0.0
+    df_reranked['is_relevant'] = 0
+
+    # Check if reranked_docs.results is not empty
+    if reranked_docs.results:
+        for i in range(len(reranked_docs.results)):
+            # Check if the index is within the bounds of the DataFrame
+            if reranked_docs.results[i].index < len(df_reranked):
+                index = reranked_docs.results[i].index
+                df_reranked.loc[index, 'cohere_score'] = reranked_docs.results[i].relevance_score
+                df_reranked.loc[index, 'is_relevant'] = 1 if reranked_docs.results[i].relevance_score > threshold else 0
+            else:
+                print(f"Warning: Rerank index {reranked_docs.results[i].index} out of bounds for DataFrame length {len(df_reranked)}")
+
 
     # Save to database
     # Note: save_reranking_results might need adjustment if you want to store channel names there too.
+    # Pass the specific request_id generated in this function
     save_reranking_results(request_id, df_reranked)
 
     # Filter relevant news, links, and channel names
@@ -389,7 +404,7 @@ def cohere_rerank(request: str, sim_news: list, news_links: list, channel_names:
     news_links = relevant_df['links'].tolist()
     relevant_channel_names = relevant_df['channel_names'].tolist() # Get relevant channel names
     num_news = len(news4request)
-    # Return relevant channel names as well
+    # Return relevant channel names as well, along with the specific request_id
     return news4request, news_links, relevant_channel_names, num_news, request_id
 
 ## Ask OpenAI - returns openai summary based on question and sample of news
@@ -461,9 +476,13 @@ def ask_media(request: str, dates: ['%Y-%m-%d',['%Y-%m-%d']] = None, sources = N
         news_links = [] # Ensure links are also empty
         channel_names = [] # Ensure channel names are also empty
         num_news = 0
+
     else:
         # Pass channel_names to cohere_rerank and receive filtered channel_names back
-        news4request, news_links, channel_names, num_news, request_id = cohere_rerank(request, news4request, news_links=news_links, channel_names=channel_names, dates=dates, stance=stance, threshold = 0.8)
+        # Correctly unpack the 5 return values from cohere_rerank
+        news4request, news_links, channel_names, num_news, request_id_rerank = cohere_rerank(request, news4request, news_links=news_links, channel_names=channel_names, dates=dates, stance=stance, threshold = 0.8)
+        # Decide which request_id to use (e.g., the one from rerank if it happened)
+        request_id = request_id_rerank
 
     # limit number of tokens vs model
     if model_name == "gpt-3.5-turbo":
@@ -479,7 +498,7 @@ def ask_media(request: str, dates: ['%Y-%m-%d',['%Y-%m-%d']] = None, sources = N
 
     # get params for long reply
     request_params = f"Request: {request}; \nFilters: dates: {dates}; sources: {sources}; stance: {stance}"
-    
+
     if len(news4request) == 0:
         reply_text = 'Нет новостей по теме'   
         n_tokens_used = 0
