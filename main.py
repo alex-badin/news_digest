@@ -173,8 +173,8 @@ async def main(client):
                 if i < len(channels_dict[stance])
             ]
             source_texts = ", ".join(source_links)
-            # Use singular/plural for "татья(и)"
-            article_word = "татья" if num_news == 1 else "татьи"
+            # Use singular/plural for "статья(и)"
+            article_word = "статья" if num_news == 1 else "статьи" if 2 <= num_news <= 4 else "статей"
             # Include the source texts (channel names with links) in the post
             post.append(f"{mapped_stance}: {bulk_compare_dict[stance]}\n({num_news} {article_word}: {source_texts})")
         result = '\n\n'.join(post)
