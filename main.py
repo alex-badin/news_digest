@@ -155,13 +155,15 @@ async def main(client):
         }
 
         post = []
-        # Change header from "Общее" to "Новость:"
-        post.append(f"<b>Новость:</b> {bulk_compare_dict['общее']} (кол-во новостей: {tot_num})")
-        post.append("🔎 Как разные источники освещают это событие?")
+        post.append(f"<b>{bulk_compare_dict['общее']}</b>")
+        post.append(f"→ Мы нашли и проанализировали\n{tot_num} статей по теме.")
+
+        post.append("🔎 КАК РАЗНЫЕ ИСТОЧНИКИ ОСВЕЩАЮТ ЭТО СОБЫТИЕ?")
         for stance, num_news in num_dict.items():
             mapped_stance = stance_names.get(stance, stance)
             if num_news == 0:
-                post.append(f"{mapped_stance}: нет новостей по теме")
+                # Оборачиваем "нет новостей по теме" в теги курсива
+                post.append(f"{mapped_stance}: \n\n<i>(нет статей)</i>")
                 continue
             # Create list of source names with hyperlinks
             # Use channels_dict[stance] to get the channel names
@@ -175,8 +177,13 @@ async def main(client):
             source_texts = ", ".join(source_links)
             # Use singular/plural for "статья(и)"
             article_word = "статья" if num_news == 1 else "статьи" if 2 <= num_news <= 4 else "статей"
-            # Include the source texts (channel names with links) in the post
-            post.append(f"{mapped_stance}: {bulk_compare_dict[stance]}\n({num_news} {article_word}: {source_texts})")
+            # Оборачиваем строку с количеством статей и источниками в теги курсива
+            post.append(f"{mapped_stance}:\n\n {bulk_compare_dict[stance]}\n<i>({num_news} {article_word}: {source_texts})</i>")
+
+        # --- Footer ---
+        post.append("Написано автоматически с помощью ИИ. \
+            Не забывайте проверять факты (например, с @dokopalsya_bot)")
+
         result = '\n\n'.join(post)
 
         # Save interim data for this topic into topics_run_data
