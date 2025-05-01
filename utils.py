@@ -373,7 +373,7 @@ def cohere_rerank(request: str, sim_news: list, news_links: list, channel_names:
     request_id = generate_request_id()
     # Ensure sim_news is a list of strings
     sim_news_str = [str(item) for item in sim_news]
-    reranked_docs = co.rerank(model="rerank-multilingual-v2.0", query=request, documents=sim_news_str)
+    reranked_docs = co.rerank(model="rerank-v3.5", query=request, documents=sim_news_str)
 
     # Include channel_names in the DataFrame
     df_reranked = pd.DataFrame({'news': sim_news, 'links': news_links, 'channel_names': channel_names})
