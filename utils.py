@@ -41,9 +41,19 @@ cohere_key = os.getenv('COHERE_KEY_PROD')
 pine_key = os.getenv('PINE_KEY')
 index_name = os.getenv('PINE_INDEX')
 
-# Validate required environment variables
-if not all([openai_key, cohere_key, pine_key, index_name]):
-    print("Error: Missing required environment variables")
+# Validate required environment variables with specific names
+missing_vars = []
+if not openai_key:
+    missing_vars.append("OPENAI_KEY")
+if not cohere_key:
+    missing_vars.append("COHERE_KEY_PROD")
+if not pine_key:
+    missing_vars.append("PINE_KEY")
+if not index_name:
+    missing_vars.append("PINE_INDEX")
+
+if missing_vars:
+    print("Error: Missing required environment variables: " + ", ".join(missing_vars))
     sys.exit(1)
 
 # INIT PINECONE

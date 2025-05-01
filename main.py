@@ -1,6 +1,5 @@
 # Purpose: get last message from TrueStory channel, summarize it and send to TG channel
 # Assumption: script runs every hour and should not miss any message
-
 from telethon import TelegramClient
 from telethon.sessions import StringSession
 import json
@@ -22,13 +21,23 @@ load_dotenv()
 # Get credentials from environment variables
 api_id = os.getenv('API_ID')
 api_hash = os.getenv('API_HASH')
-# channel_id = os.getenv('CHANNEL_ID')
-channel_id = os.getenv('CHANNEL_ID_TEST2')
+channel_id = os.getenv('CHANNEL_ID')
+# channel_id = os.getenv('CHANNEL_ID_TEST2')
 session_string = os.getenv('SESSION_STRING')
 
 # Validate required environment variables
-if not all([api_id, api_hash, channel_id, session_string]):
-    print("Error: Missing required environment variables")
+missing_vars = []
+if not api_id:
+    missing_vars.append('API_ID')
+if not api_hash:
+    missing_vars.append('API_HASH')
+if not channel_id:
+    missing_vars.append('CHANNEL_ID')
+if not session_string:
+    missing_vars.append('SESSION_STRING')
+
+if missing_vars:
+    print("Error: Missing required environment variables:", ", ".join(missing_vars))
     sys.exit(1)
 
 # Convert api_id and channel_id to integer as they come as strings from env
