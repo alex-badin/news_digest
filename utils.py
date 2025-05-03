@@ -266,7 +266,7 @@ def get_embedding(text, model = 'embed-multilingual-v3.0', input_type = 'cluster
 # get similar news from PINECONE with filters (dates=None, sources=None, stance=None)
 @retry(stop=stop_after_attempt(6), wait=wait_random_exponential(multiplier=1, max=10))
 def get_top_pine(request: str=None, request_emb=None, dates: ['%Y-%m-%d',['%Y-%m-%d']]=None, sources=None, stance=None\
-                 , model="embed-multilingual-v3.0", top_n=10, join_news=True):
+                 , model="embed-multilingual-v3.0", top_n=20, join_news=True):
     """
     Returns top news articles related to a given request and stance, within a specified date range.
 
@@ -305,7 +305,7 @@ def get_top_pine(request: str=None, request_emb=None, dates: ['%Y-%m-%d',['%Y-%m
             end_date = (datetime.today() + timedelta(days=1)).strftime('%Y-%m-%d')
     else:
         # set range from 2022-02-01 to today
-        start_date = '2000-02-01'
+        start_date = '2022-02-01'
         end_date = (datetime.today() + timedelta(days=1)).strftime('%Y-%m-%d')
 
     # transform dates to int (for pinecone filter)
@@ -538,7 +538,7 @@ def make_summaries(topic, dates):
     channels_dict = {} # Add dictionary for channel names
     for stance in ['tv', 'voenkor', 'inet propaganda', 'moder', 'altern']:
         # Receive channel_names from ask_media
-        reply_text, num_news, news_links, channel_names = ask_media(request=topic, dates=dates, stance=[stance], full_reply=False, top_n=20, prompt_language="ru_fl")
+        reply_text, num_news, news_links, channel_names = ask_media(request=topic, dates=dates, stance=[stance], full_reply=False, top_n=50, prompt_language="ru_fl")
         summary_dict[stance] = reply_text
         num_dict[stance] = num_news
         links_dict[stance] = news_links
