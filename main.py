@@ -22,6 +22,7 @@ load_dotenv()
 api_id = os.getenv('API_ID')
 api_hash = os.getenv('API_HASH')
 channel_id = os.getenv('CHANNEL_ID')
+channel_id_old = os.getenv('CHANNEL_ID_OLD')  # Add this line
 # channel_id = os.getenv('CHANNEL_ID_TEST2')
 session_string = os.getenv('SESSION_STRING')
 
@@ -33,6 +34,8 @@ if not api_hash:
     missing_vars.append('API_HASH')
 if not channel_id:
     missing_vars.append('CHANNEL_ID')
+if not channel_id_old:
+    missing_vars.append('CHANNEL_ID_OLD')  # Add this line
 if not session_string:
     missing_vars.append('SESSION_STRING')
 
@@ -43,6 +46,7 @@ if missing_vars:
 # Convert api_id and channel_id to integer as they come as strings from env
 api_id = int(api_id)
 channel_id = int(channel_id)
+channel_id_old = int(channel_id_old)  # Add this line
 
 # csv file tracking messages id
 truestory_ids = 'truestory_ids.csv'
@@ -137,7 +141,8 @@ ic(header_text, cleaned_texts)
 full_reply = False
 
 async def send_header(client):
-    await client.send_message(channel_id, header)
+        await client.send_message(channel_id, header)
+    await client.send_message(channel_id_old, header)
 
 async def main(client):
     global topics_run_data  # to accumulate run data
@@ -210,9 +215,10 @@ async def main(client):
             "final_post": result
         })
 
-        # send compare_reply to TG channel
+        # send compare_reply to both TG channels
         await client.send_message(channel_id, result, link_preview=False)
-        print(f"Sent to TG channel topic {i}")
+        await client.send_message(channel_id_old, result, link_preview=False)
+        print(f"Sent to both TG channels topic {i}")
         time.sleep(1)
 
 async def run():
