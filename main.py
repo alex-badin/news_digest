@@ -170,14 +170,15 @@ async def main(client):
 
         post = []
         post.append(f"<b>{bulk_compare_dict['общее']}</b>")
-        post.append(f"→ Мы нашли и проанализировали\n{tot_num} статей по теме.")
+        article_word = "статья" if tot_num % 10 == 1 and tot_num % 100 != 11 else "статьи" if 2 <= tot_num % 10 <= 4 and (tot_num % 100 < 10 or tot_num % 100 >= 20) else "статей"
+        post.append(f"→ Мы нашли и проанализировали\n{tot_num} {article_word} по теме.")
 
-        post.append("🔎 КАК РАЗНЫЕ ИСТОЧНИКИ ОСВЕЩАЮТ ЭТО СОБЫТИЕ?")
+        post.append("🔎 <b>КАК РАЗНЫЕ ИСТОЧНИКИ ОСВЕЩАЮТ ЭТО СОБЫТИЕ?</b>")
         for stance, num_news in num_dict.items():
             mapped_stance = stance_names.get(stance, stance)
             if num_news == 0:
                 # Оборачиваем "нет новостей по теме" в теги курсива
-                post.append(f"<b>{mapped_stance}</b>: \n\n<i>(нет статей)</i>")
+                post.append(f"<b>{mapped_stance}:</b>\n\n<i>(нет статей)</i>")
                 continue
             # Create list of source names with hyperlinks
             # Use channels_dict[stance] to get the channel names
@@ -192,12 +193,11 @@ async def main(client):
             # Use singular/plural for "статья(и)"
             article_word = "статья" if num_news % 10 == 1 and num_news % 100 != 11 else "статьи" if 2 <= num_news % 10 <= 4 and (num_news % 100 < 10 or num_news % 100 >= 20) else "статей"
             # Оборачиваем строку с количеством статей и источниками в теги курсива
-            post.append(f"<b>{mapped_stance}</b>:\n\n {bulk_compare_dict[stance]}\n<i>({num_news} {article_word}: {source_texts})</i>")
+            post.append(f"<b>{mapped_stance}:</b>\n\n{bulk_compare_dict[stance]}\n<i>({num_news} {article_word}: {source_texts})</i>")
 
         # --- Footer ---
         # Wrap footer in italic tags
-        post.append("<i>Написано автоматически с помощью ИИ. \
-            Не забывайте проверять факты (например, с @dokopalsya_bot)</i>")
+        post.append("<i>Написано автоматически с помощью ИИ. Не забывайте проверять факты (например, с @dokopalsya_bot)</i>")
 
         result = '\n\n'.join(post)
 
