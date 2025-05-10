@@ -141,7 +141,7 @@ ic(header_text, cleaned_texts)
 full_reply = False
 
 async def send_header(client):
-        await client.send_message(channel_id, header)
+    await client.send_message(channel_id, header)
     await client.send_message(channel_id_old, header)
 
 async def main(client):
