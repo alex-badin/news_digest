@@ -1,5 +1,5 @@
-# Purpose: get last message from TrueStory channel, summarize it and send to TG channel
-# Assumption: script runs every hour and should not miss any message
+# Purpose: get last message from TrueStory channel, summarize it and send to TG digest channel
+# Assumption: script runs every hour and should not miss any message from TrueStory
 from telethon import TelegramClient
 from telethon.sessions import StringSession
 import json
@@ -19,34 +19,56 @@ from utils import init_db, generate_request_id, save_full_run
 load_dotenv()
 
 # Get credentials from environment variables
+app_env = os.getenv('APP_ENV', 'production').lower()
+
 api_id = os.getenv('API_ID')
 api_hash = os.getenv('API_HASH')
-channel_id = os.getenv('CHANNEL_ID')
-channel_id_old = os.getenv('CHANNEL_ID_OLD')  # Add this line
-# channel_id = os.getenv('CHANNEL_ID_TEST2')
 session_string = os.getenv('SESSION_STRING')
+min_articles_for_processing_str = os.getenv('MIN_ARTICLES_FOR_PROCESSING', '2') # Default to 2 if not set
+
+channel_id_str = None
+channel_id_old_str = None
+
+if app_env == 'development':
+    print("INFO: Running in DEVELOPMENT mode.")
+    channel_id_str = os.getenv('CHANNEL_ID_TEST')
+    channel_id_old_str = os.getenv('CHANNEL_ID_OLD_TEST') # Assuming you might have a separate 'old' test channel
+    if not channel_id_old_str: # Fallback if only one test channel ID is defined
+        channel_id_old_str = channel_id_str 
+        print("INFO: CHANNEL_ID_OLD_TEST not set, using CHANNEL_ID_TEST for both.")
+elif app_env == 'production':
+    print("INFO: Running in PRODUCTION mode.")
+    channel_id_str = os.getenv('CHANNEL_ID_PROD')
+    channel_id_old_str = os.getenv('CHANNEL_ID_OLD_PROD')
+else:
+    print(f"Warning: APP_ENV is set to '{app_env}', which is not recognized. Defaulting to PRODUCTION mode.")
+    channel_id_str = os.getenv('CHANNEL_ID_PROD')
+    channel_id_old_str = os.getenv('CHANNEL_ID_OLD_PROD')
 
 # Validate required environment variables
 missing_vars = []
-if not api_id:
-    missing_vars.append('API_ID')
-if not api_hash:
-    missing_vars.append('API_HASH')
-if not channel_id:
-    missing_vars.append('CHANNEL_ID')
-if not channel_id_old:
-    missing_vars.append('CHANNEL_ID_OLD')  # Add this line
-if not session_string:
-    missing_vars.append('SESSION_STRING')
+if not api_id: missing_vars.append('API_ID')
+if not api_hash: missing_vars.append('API_HASH')
+if not session_string: missing_vars.append('SESSION_STRING')
+if not channel_id_str:
+    missing_vars.append('CHANNEL_ID_PROD or CHANNEL_ID_TEST (based on APP_ENV)')
+if not channel_id_old_str:
+    missing_vars.append('CHANNEL_ID_OLD_PROD or CHANNEL_ID_OLD_TEST (based on APP_ENV)')
 
 if missing_vars:
     print("Error: Missing required environment variables:", ", ".join(missing_vars))
     sys.exit(1)
 
-# Convert api_id and channel_id to integer as they come as strings from env
+# Convert to integer
 api_id = int(api_id)
-channel_id = int(channel_id)
-channel_id_old = int(channel_id_old)  # Add this line
+channel_id = int(channel_id_str)
+channel_id_old = int(channel_id_old_str)
+
+try:
+    min_articles_for_processing = int(min_articles_for_processing_str)
+except ValueError:
+    print(f"Error: MIN_ARTICLES_FOR_PROCESSING must be an integer. Found: {min_articles_for_processing_str}")
+    sys.exit(1)
 
 # csv file tracking messages id
 truestory_ids = 'truestory_ids.csv'
@@ -146,20 +168,38 @@ async def send_header(client):
 
 async def main(client):
     global topics_run_data  # to accumulate run data
+    
     for i, topic in enumerate(cleaned_texts):
-        print(f"Starting OpenAI summary of topic #{i}: {topic[:40]}")
+        print(f"Processing topic #{i}: {topic[:40]}...")
         client.parse_mode = 'html'
 
         # get summaries, links & channel names for each stance
-        # Update the call to unpack the new channels_dict
         summary_dict, num_dict, links_dict, channels_dict = utils.make_summaries(topic, dates)
         tot_num = sum(num_dict.values())  # total number of news
-        # compare stances
+
+        if tot_num <= min_articles_for_processing:
+            print(f"INFO: Skipping topic '{topic[:40]}...' - found only {tot_num} articles (threshold is > {min_articles_for_processing}).")
+            topics_run_data.append({
+                "topic": topic,
+                "status": "skipped",
+                "reason": f"Found {tot_num} articles, threshold is > {min_articles_for_processing}.",
+                "summaries": { # Store what little was found
+                    "summary_dict": summary_dict,
+                    "num_dict": num_dict,
+                    "links_dict": links_dict,
+                    "channels_dict": channels_dict
+                },
+                "comparison": None,
+                "final_post": None
+            })
+            continue # Skip to the next topic
+
+        # If not skipped, proceed with comparison and posting
+        print(f"Sufficient articles ({tot_num}) found for topic '{topic[:40]}...'. Proceeding with comparison.")
         summary_string = '\n'.join([f'[{key}]: {value}' for key, value in summary_dict.items() if num_dict[key] != 0])
-        # Pass request_id from make_summaries or generate a new one if needed for compare_stances logging
         bulk_compare_json = utils.compare_stances(topic, summary_string, dates=dates, full_reply=False)
         bulk_compare_dict = json.loads(bulk_compare_json)
-        # assemble TG post:
+        
         stance_names = {
             'tv': "📺 Российское телевидение",
             'voenkor': "🪖 Военные корреспонденты",
@@ -205,6 +245,7 @@ async def main(client):
         # Include channel names in the saved data if needed for logging/debugging
         topics_run_data.append({
             "topic": topic,
+            "status": "processed", # Added status for processed items
             "summaries": {
                 "summary_dict": summary_dict,
                 "num_dict": num_dict,
@@ -218,7 +259,7 @@ async def main(client):
         # send compare_reply to both TG channels
         await client.send_message(channel_id, result, link_preview=False)
         await client.send_message(channel_id_old, result, link_preview=False)
-        print(f"Sent to both TG channels topic {i}")
+        print(f"Sent to both TG channels topic #{i}: {topic[:40]}...")
         time.sleep(1)
 
 async def run():
