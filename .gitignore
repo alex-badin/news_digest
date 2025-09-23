@@ -25,6 +25,7 @@ build/
 *.db
 pinecone_results.txt
 data/
+tests/
 
 # IDE specific files
 .idea/
